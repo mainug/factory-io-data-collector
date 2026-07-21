@@ -9,6 +9,7 @@ namespace MesProj.Services
     {
         event EventHandler<FactoryStatus> StatusChanged;
         event EventHandler<string> CommunicationError;
+        event EventHandler<ProcessEvent> ProcessEventOccurred;
 
         FactoryConnectionState ConnectionState { get; }
         bool IsEmergencyStopped { get; }
@@ -20,6 +21,7 @@ namespace MesProj.Services
         Task WriteCoilAsync(int address, bool value, CancellationToken cancellationToken);
         Task<bool> ReadDiscreteInputAsync(int address, CancellationToken cancellationToken);
         Task<int> ReadHoldingRegisterAsync(int address, CancellationToken cancellationToken);
+        Task<int> ReadInputRegisterAsync(int address, CancellationToken cancellationToken);
         Task StartAsync(CancellationToken cancellationToken);
         Task StopAsync(CancellationToken cancellationToken);
         Task EmergencyStopAsync(CancellationToken cancellationToken);

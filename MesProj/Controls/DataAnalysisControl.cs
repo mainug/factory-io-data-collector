@@ -16,6 +16,7 @@ namespace MesProj.Controls
         private readonly Label _faults = new Label();
         private readonly Label _period = new Label();
         private readonly DataGridView _grid = new DataGridView();
+        private readonly DataGridView _eventGrid = new DataGridView();
 
         public DataAnalysisControl(ITelemetryService telemetry)
         {
@@ -50,9 +51,21 @@ namespace MesProj.Controls
             _grid.AllowUserToAddRows = false;
             _grid.AutoGenerateColumns = true;
             _grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+            _eventGrid.Dock = DockStyle.Fill;
+            _eventGrid.ReadOnly = true;
+            _eventGrid.AllowUserToAddRows = false;
+            _eventGrid.AutoGenerateColumns = true;
+            _eventGrid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+            var tabs = new TabControl { Dock = DockStyle.Fill };
+            var eventTab = new TabPage("공정 이벤트");
+            var telemetryTab = new TabPage("원시 텔레메트리");
+            eventTab.Controls.Add(_eventGrid);
+            telemetryTab.Controls.Add(_grid);
+            tabs.TabPages.Add(eventTab);
+            tabs.TabPages.Add(telemetryTab);
             root.Controls.Add(cards, 0, 0);
             root.Controls.Add(_period, 0, 1);
-            root.Controls.Add(_grid, 0, 2);
+            root.Controls.Add(tabs, 0, 2);
             Controls.Add(root);
         }
 
@@ -86,6 +99,14 @@ namespace MesProj.Controls
                 정상 = x.GoodQuantity,
                 불량 = x.DefectQuantity,
                 고장설비 = x.FaultEquipmentCount
+            }).ToList();
+            _eventGrid.DataSource = _telemetry.GetRecentProcessEvents(100).Select(x => new
+            {
+                시각 = x.Timestamp.ToString("HH:mm:ss.fff"),
+                공정단계 = x.Stage,
+                센서명 = x.SensorName,
+                주소 = "Input " + x.InputAddress,
+                이벤트 = x.EventType
             }).ToList();
         }
     }

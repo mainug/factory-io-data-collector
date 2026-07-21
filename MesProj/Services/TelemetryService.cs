@@ -15,6 +15,8 @@ namespace MesProj.Services
         void Record(FactoryStatus status);
         TelemetryAnalysis GetAnalysis();
         IReadOnlyList<TelemetrySample> GetRecentSamples(int count);
+        void RecordProcessEvent(ProcessEvent processEvent);
+        IReadOnlyList<ProcessEvent> GetRecentProcessEvents(int count);
         string DataDirectory { get; }
     }
 
@@ -23,6 +25,7 @@ namespace MesProj.Services
         private const int MaxMemorySamples = 3600;
         private readonly object _syncRoot = new object();
         private readonly List<TelemetrySample> _samples = new List<TelemetrySample>();
+        private readonly List<ProcessEvent> _processEvents = new List<ProcessEvent>();
         private readonly string _dataDirectory;
         private bool _disposed;
 
@@ -105,6 +108,45 @@ namespace MesProj.Services
             }
         }
 
+        public void RecordProcessEvent(ProcessEvent processEvent)
+        {
+            if (processEvent == null || _disposed) return;
+            lock (_syncRoot)
+            {
+                _processEvents.Add(processEvent);
+                if (_processEvents.Count > 1000) _processEvents.RemoveAt(0);
+                var path = Path.Combine(_dataDirectory, "process_events_" + processEvent.Timestamp.ToString("yyyyMMdd") + ".csv");
+                var writeHeader = !File.Exists(path);
+                try
+                {
+                    using (var writer = new StreamWriter(path, true, new UTF8Encoding(true)))
+                    {
+                        if (writeHeader) writer.WriteLine("timestamp,stage,sensor_key,sensor_name,input_address,event_type");
+                        writer.WriteLine(string.Join(",", new[]
+                        {
+                            processEvent.Timestamp.ToString("o", CultureInfo.InvariantCulture),
+                            EscapeCsv(processEvent.Stage), EscapeCsv(processEvent.SensorKey), EscapeCsv(processEvent.SensorName),
+                            processEvent.InputAddress.ToString(CultureInfo.InvariantCulture), EscapeCsv(processEvent.EventType)
+                        }));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Error("Process event CSV write failed.", ex);
+                }
+            }
+            var handler = AnalysisChanged;
+            if (handler != null) handler(this, EventArgs.Empty);
+        }
+
+        public IReadOnlyList<ProcessEvent> GetRecentProcessEvents(int count)
+        {
+            lock (_syncRoot)
+            {
+                return _processEvents.Skip(Math.Max(0, _processEvents.Count - Math.Max(0, count))).Reverse().ToList();
+            }
+        }
+
         public void Dispose() { _disposed = true; }
 
         private void AppendCsv(TelemetrySample sample)
@@ -125,6 +167,12 @@ namespace MesProj.Services
                     sample.FaultEquipmentCount.ToString(CultureInfo.InvariantCulture)
                 }));
             }
+        }
+
+        private static string EscapeCsv(string value)
+        {
+            value = value ?? string.Empty;
+            return value.IndexOfAny(new[] { ',', '"', '\r', '\n' }) >= 0 ? "\"" + value.Replace("\"", "\"\"") + "\"" : value;
         }
     }
 }

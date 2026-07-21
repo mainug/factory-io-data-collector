@@ -18,9 +18,13 @@ namespace MesProj.Controls
         private readonly Func<CommunicationOptions> _getOptions;
         private readonly Action<string> _setStatus;
         private readonly DataGridView _grid = new DataGridView();
+        private readonly DataGridView _sensorGrid = new DataGridView();
         private readonly Label _connectionLabel = new Label();
         private readonly Label _lastCommunicationLabel = new Label();
         private readonly Label _optionsLabel = new Label();
+        private readonly Label _machiningProgressLabel = new Label();
+        private readonly ProgressBar _machiningProgressBar = new ProgressBar();
+        private readonly Button _machiningStartButton = new Button();
 
         public EquipmentControlControl(IFactoryIoService factoryIoService, ISettingsService settingsService, IApplicationStateService stateService, Func<CommunicationOptions> getOptions, Action<string> setStatus)
         {
@@ -61,19 +65,34 @@ namespace MesProj.Controls
             AddActionButton(connectionLayout, "연결 해제", async delegate { await RunCommandAsync(ct => _factoryIoService.DisconnectAsync(ct), "연결 해제 완료"); });
             connectionGroup.Controls.Add(connectionLayout);
 
-            var operationGroup = new GroupBox { Text = "운전 제어", Dock = DockStyle.Fill, Font = new Font("맑은 고딕", 10, FontStyle.Bold) };
+            var operationGroup = new GroupBox { Text = "가공 상태", Dock = DockStyle.Fill, Font = new Font("맑은 고딕", 10, FontStyle.Bold) };
             var operationLayout = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(10), AutoScroll = true };
-            AddActionButton(operationLayout, "전체 가동", async delegate { await RunCommandAsync(ct => _factoryIoService.StartAsync(ct), "전체 가동"); });
-            AddActionButton(operationLayout, "전체 정지", async delegate { await RunCommandAsync(ct => _factoryIoService.StopAsync(ct), "전체 정지"); });
-            AddActionButton(operationLayout, "비상 정지", async delegate { await RunCommandAsync(ct => _factoryIoService.EmergencyStopAsync(ct), "비상 정지"); });
-            AddActionButton(operationLayout, "비상 정지 해제", async delegate { await RunCommandAsync(ct => _factoryIoService.ResetEmergencyStopAsync(ct), "비상 정지 해제"); });
-            AddActionButton(operationLayout, "자동 모드", async delegate { await RunCommandAsync(ct => _factoryIoService.SetOperationModeAsync(OperationMode.Auto, ct), "자동 모드"); });
-            AddActionButton(operationLayout, "수동 모드", async delegate { await RunCommandAsync(ct => _factoryIoService.SetOperationModeAsync(OperationMode.Manual, ct), "수동 모드"); });
+            _machiningProgressLabel.AutoSize = true;
+            _machiningProgressLabel.Margin = new Padding(0, 8, 12, 0);
+            _machiningProgressBar.Width = 420;
+            _machiningProgressBar.Height = 28;
+            operationLayout.Controls.Add(_machiningProgressLabel);
+            operationLayout.Controls.Add(_machiningProgressBar);
+            _machiningStartButton.Text = "가공 시작";
+            _machiningStartButton.Width = 122;
+            _machiningStartButton.Height = 36;
+            _machiningStartButton.Click += MachiningStartButtonClick;
+            operationLayout.Controls.Add(_machiningStartButton);
             operationGroup.Controls.Add(operationLayout);
 
-            var equipmentGroup = new GroupBox { Text = "개별 설비 제어", Dock = DockStyle.Fill, Font = new Font("맑은 고딕", 10, FontStyle.Bold) };
+            var equipmentGroup = new GroupBox { Text = "가공 도입부 I/O", Dock = DockStyle.Fill, Font = new Font("맑은 고딕", 10, FontStyle.Bold) };
+            var equipmentLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
+            equipmentLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 55));
+            equipmentLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 45));
+            var actuatorGroup = new GroupBox { Text = "액추에이터 제어", Dock = DockStyle.Fill };
+            var sensorGroup = new GroupBox { Text = "센서 모니터링", Dock = DockStyle.Fill };
             ConfigureGrid();
-            equipmentGroup.Controls.Add(_grid);
+            ConfigureSensorGrid();
+            actuatorGroup.Controls.Add(_grid);
+            sensorGroup.Controls.Add(_sensorGrid);
+            equipmentLayout.Controls.Add(actuatorGroup, 0, 0);
+            equipmentLayout.Controls.Add(sensorGroup, 0, 1);
+            equipmentGroup.Controls.Add(equipmentLayout);
 
             root.Controls.Add(connectionGroup, 0, 0);
             root.Controls.Add(operationGroup, 0, 1);
@@ -96,21 +115,35 @@ namespace MesProj.Controls
             _grid.ReadOnly = true;
             _grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
             _grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+            _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "공정 구간", DataPropertyName = "Section" });
             _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "설비명", DataPropertyName = "Name" });
             _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "현재 명령 상태", DataPropertyName = "CommandStateText" });
-            _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "연계 센서 상태", DataPropertyName = "FeedbackStateText" });
             _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "I/O 주소", DataPropertyName = "AddressText" });
             _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "마지막 변경 시각", DataPropertyName = "LastChangedAt" });
-            var on = new DataGridViewButtonColumn { HeaderText = "ON/Start", Text = "Start", UseColumnTextForButtonValue = true };
-            var off = new DataGridViewButtonColumn { HeaderText = "OFF/Stop", Text = "Stop", UseColumnTextForButtonValue = true };
+            var on = new DataGridViewButtonColumn { HeaderText = "ON 설정", Text = "ON", UseColumnTextForButtonValue = true };
+            var off = new DataGridViewButtonColumn { HeaderText = "OFF 설정", Text = "OFF", UseColumnTextForButtonValue = true };
             _grid.Columns.Add(on);
             _grid.Columns.Add(off);
             _grid.CellContentClick += GridCellContentClick;
         }
 
+        private void ConfigureSensorGrid()
+        {
+            _sensorGrid.Dock = DockStyle.Fill;
+            _sensorGrid.AutoGenerateColumns = false;
+            _sensorGrid.AllowUserToAddRows = false;
+            _sensorGrid.ReadOnly = true;
+            _sensorGrid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+            _sensorGrid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+            _sensorGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "센서명", DataPropertyName = "Name" });
+            _sensorGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "현재 상태", DataPropertyName = "StateText" });
+            _sensorGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "I/O 주소", DataPropertyName = "AddressText" });
+            _sensorGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "마지막 변경 시각", DataPropertyName = "LastChangedAt" });
+        }
+
         private async void GridCellContentClick(object sender, DataGridViewCellEventArgs e)
         {
-            if (e.RowIndex < 0 || e.ColumnIndex < 0)
+            if (e.RowIndex < 0 || (e.ColumnIndex != 5 && e.ColumnIndex != 6))
             {
                 return;
             }
@@ -123,7 +156,49 @@ namespace MesProj.Controls
             }
 
             var value = e.ColumnIndex == 5;
-            await RunCommandAsync(ct => _factoryIoService.WriteCoilAsync(row.OutputAddress, value, ct), row.Name + (value ? " Start" : " Stop"));
+            var action = row.OutputAddress == 1
+                ? (value ? "Lid 선택" : "Base 선택")
+                : (value ? "ON" : "OFF");
+            await RunCommandAsync(ct => _factoryIoService.WriteCoilAsync(row.OutputAddress, value, ct), row.Name + " " + action);
+        }
+
+        private async void MachiningStartButtonClick(object sender, EventArgs e)
+        {
+            var snapshot = _stateService.GetSnapshot();
+            var entrance = snapshot.EquipmentStatuses.FirstOrDefault(x => x.Key == "MachiningEntranceSensor");
+            var busy = snapshot.EquipmentStatuses.FirstOrDefault(x => x.Key == "MachiningBusy");
+            var error = snapshot.EquipmentStatuses.FirstOrDefault(x => x.Key == "MachiningError");
+
+            if (snapshot.Summary.ConnectionState != FactoryConnectionState.Connected)
+            {
+                _setStatus("Factory I/O 연결 후 가공을 시작할 수 있습니다.");
+                return;
+            }
+
+            if (entrance == null || !entrance.FeedbackState)
+            {
+                _setStatus("가공 입구 센서에 원소재가 감지되지 않았습니다.");
+                return;
+            }
+
+            if ((busy != null && busy.FeedbackState) || (error != null && error.FeedbackState))
+            {
+                _setStatus("가공기가 동작 중이거나 오류 상태입니다.");
+                return;
+            }
+
+            await RunCommandAsync(async ct =>
+            {
+                await _factoryIoService.WriteCoilAsync(2, true, ct);
+                try
+                {
+                    await Task.Delay(200, ct);
+                }
+                finally
+                {
+                    await _factoryIoService.WriteCoilAsync(2, false, CancellationToken.None);
+                }
+            }, "가공 시작 신호 전송 완료");
         }
 
         private async Task RunCommandAsync(Func<CancellationToken, Task> command, string successMessage)
@@ -161,26 +236,88 @@ namespace MesProj.Controls
             _lastCommunicationLabel.Text = "마지막 통신: " + (snapshot.LastCommunicationAt == DateTime.MinValue ? "-" : snapshot.LastCommunicationAt.ToString("HH:mm:ss"));
             _lastCommunicationLabel.AutoSize = true;
             _lastCommunicationLabel.Margin = new Padding(0, 8, 22, 0);
-            _grid.DataSource = snapshot.EquipmentStatuses
-                .Where(x => x.OutputAddress >= 0)
+            var progress = Math.Max(0, Math.Min(100, snapshot.MachiningProgress));
+            _machiningProgressLabel.Text = "Machining Center 진행률: " + progress + "%";
+            _machiningProgressBar.Value = progress;
+            var entranceReady = snapshot.EquipmentStatuses.Any(x => x.Key == "MachiningEntranceSensor" && x.FeedbackState);
+            var machiningBusy = snapshot.EquipmentStatuses.Any(x => x.Key == "MachiningBusy" && x.FeedbackState);
+            var machiningError = snapshot.EquipmentStatuses.Any(x => x.Key == "MachiningError" && x.FeedbackState);
+            _machiningStartButton.Enabled = snapshot.Summary.ConnectionState == FactoryConnectionState.Connected
+                && entranceReady && !machiningBusy && !machiningError;
+            var equipmentRows = snapshot.EquipmentStatuses
+                .Where(x => x.OutputAddress >= 0 && !x.IsPulseOutput)
                 .Select(x => new EquipmentRow(x))
                 .ToList();
+            var sensorRows = snapshot.EquipmentStatuses
+                .Where(x => x.InputAddress >= 0)
+                .Select(x => new SensorRow(x))
+                .ToList();
+            BindPreservingScroll(_grid, equipmentRows);
+            BindPreservingScroll(_sensorGrid, sensorRows);
+        }
+
+        private static void BindPreservingScroll(DataGridView grid, object dataSource)
+        {
+            var firstRow = grid.FirstDisplayedScrollingRowIndex;
+            var horizontalOffset = grid.HorizontalScrollingOffset;
+            grid.DataSource = dataSource;
+
+            if (firstRow >= 0 && firstRow < grid.RowCount)
+            {
+                grid.FirstDisplayedScrollingRowIndex = firstRow;
+            }
+
+            if (horizontalOffset > 0)
+            {
+                grid.HorizontalScrollingOffset = horizontalOffset;
+            }
+        }
+
+        private sealed class SensorRow
+        {
+            public string Name { get; private set; }
+            public string Section { get; private set; }
+            public string StateText { get; private set; }
+            public string AddressText { get; private set; }
+            public string LastChangedAt { get; private set; }
+
+            public SensorRow(EquipmentStatus status)
+            {
+                Name = status.Name;
+                Section = status.Name.IndexOf("Roller", StringComparison.OrdinalIgnoreCase) >= 0 ? "박스 이송" : "가공품 공급";
+                StateText = status.FeedbackState ? "ON" : "OFF";
+                AddressText = "Input " + status.InputAddress;
+                LastChangedAt = status.LastChangedAt.ToString("HH:mm:ss");
+            }
         }
 
         private sealed class EquipmentRow
         {
+            public string Section { get; private set; }
             public string Name { get; private set; }
             public bool CommandState { get; private set; }
             public bool FeedbackState { get; private set; }
             public int OutputAddress { get; private set; }
-            public string CommandStateText { get { return CommandState ? "ON" : "OFF"; } }
+            public string CommandStateText
+            {
+                get
+                {
+                    if (OutputAddress == 1)
+                    {
+                        return CommandState ? "Lid" : "Base";
+                    }
+
+                    return CommandState ? "ON" : "OFF";
+                }
+            }
             public string FeedbackStateText { get { return FeedbackState ? "ON" : "OFF"; } }
-            public string AddressText { get { return OutputAddress.ToString(); } }
+            public string AddressText { get { return "Coil " + OutputAddress; } }
             public string LastChangedAt { get; private set; }
 
             public EquipmentRow(EquipmentStatus status)
             {
                 Name = status.Name;
+                Section = status.OutputAddress == 0 ? "원소재 이송" : "가공 종류 설정";
                 CommandState = status.CommandState;
                 FeedbackState = status.FeedbackState;
                 OutputAddress = status.OutputAddress;

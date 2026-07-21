@@ -52,6 +52,13 @@ namespace MesProj.Services
             return (ushort)((response[2] << 8) | response[3]);
         }
 
+        public async Task<ushort> ReadInputRegisterAsync(ushort address, CancellationToken cancellationToken)
+        {
+            var response = await SendAsync(4, AddressAndQuantity(address, 1), cancellationToken).ConfigureAwait(false);
+            if (response.Length < 4 || response[1] != 2) throw new IOException("잘못된 Input Register 응답입니다.");
+            return (ushort)((response[2] << 8) | response[3]);
+        }
+
         public async Task WriteSingleCoilAsync(ushort address, bool value, CancellationToken cancellationToken)
         {
             var data = new byte[]
