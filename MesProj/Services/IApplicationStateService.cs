@@ -7,6 +7,7 @@ namespace MesProj.Services
     public interface IApplicationStateService
     {
         event EventHandler<AppStateSnapshot> StateChanged;
+        event EventHandler TargetQuantityReached;
         AppStateSnapshot GetSnapshot();
         void ApplyFactoryStatus(FactoryStatus status);
         void SetCurrentWorkOrder(WorkOrder workOrder);

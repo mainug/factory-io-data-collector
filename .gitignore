@@ -1,16 +1,49 @@
-# Local Factory I/O scenes
+# Factory I/O local scenes and backups
 *.factoryio
+*.factoryio.bak
+*.factoryio.autosave
 
 # Reference Siemens TIA Portal project
 /ProductionLine_20220404_0842/
 
-# Visual Studio and .NET build outputs
+# Codex/agent local workspace metadata
+/.agents/
+/.codex/
+
+# Visual Studio / Rider local state
 .vs/
-**/bin/
-**/obj/
+.idea/
 *.user
 *.suo
+*.userosscache
+*.sln.docstates
 
-# Runtime-generated local files
-MesProj.log
-communication-settings.json
+# .NET build outputs, restored packages, and verification artifacts
+**/bin/
+**/obj/
+**/[Dd]ebug/
+**/[Rr]elease/
+**/TestResults/
+/artifacts/
+/packages/
+
+# Runtime logs, local settings, and collected telemetry
+*.log
+**/communication-settings.json
+**/Data/
+**/telemetry_*.csv
+
+# Test and coverage output
+*.trx
+*.coverage
+*.coveragexml
+/coverage/
+
+# Windows and editor temporary files
+Thumbs.db
+Desktop.ini
+*.tmp
+*.temp
+*.bak
+*.swp
+*~

@@ -17,6 +17,7 @@ namespace MesProj.Infrastructure
         public static readonly EquipmentDefinition Sorter3Belt = new EquipmentDefinition("Sorter3Belt", "분류기 3 벨트", 8);
         public static readonly EquipmentDefinition VisionSensor = new EquipmentDefinition("VisionSensor", "비전 센서", -1);
         public static readonly EquipmentDefinition Emitter = new EquipmentDefinition("Emitter", "제품 생성기", 13);
+        public static readonly EquipmentDefinition BlueBaseBelt1Pilot = new EquipmentDefinition("BlueBaseBelt1", "Blue Base Belt 1", 0, 0);
 
         public const int AtExitSensorInput = 0;
         public const int VisionRegister = 0;
@@ -53,12 +54,14 @@ namespace MesProj.Infrastructure
         public string Key { get; private set; }
         public string Name { get; private set; }
         public int OutputAddress { get; private set; }
+        public int FeedbackInputAddress { get; private set; }
 
-        public EquipmentDefinition(string key, string name, int outputAddress)
+        public EquipmentDefinition(string key, string name, int outputAddress, int feedbackInputAddress = -1)
         {
             Key = key;
             Name = name;
             OutputAddress = outputAddress;
+            FeedbackInputAddress = feedbackInputAddress;
         }
     }
 }

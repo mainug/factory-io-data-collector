@@ -98,7 +98,7 @@ namespace MesProj.Controls
             _grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
             _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "설비명", DataPropertyName = "Name" });
             _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "현재 명령 상태", DataPropertyName = "CommandStateText" });
-            _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "실제 피드백 상태", DataPropertyName = "FeedbackStateText" });
+            _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "연계 센서 상태", DataPropertyName = "FeedbackStateText" });
             _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "I/O 주소", DataPropertyName = "AddressText" });
             _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "마지막 변경 시각", DataPropertyName = "LastChangedAt" });
             var on = new DataGridViewButtonColumn { HeaderText = "ON/Start", Text = "Start", UseColumnTextForButtonValue = true };

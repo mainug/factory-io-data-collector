@@ -99,9 +99,17 @@ namespace MesProj.Controls
         private void CreateWorkOrder(object sender, EventArgs e)
         {
             var order = ReadInput();
+            if (_repository.GetAll().Any(x => string.Equals(x.WorkOrderNo, order.WorkOrderNo, StringComparison.OrdinalIgnoreCase)))
+            {
+                _setStatus("이미 존재하는 작업지시 번호입니다: " + order.WorkOrderNo);
+                return;
+            }
+
             order.Status = WorkOrderStatus.Created;
             _repository.Add(order);
             RefreshGrid();
+            SelectWorkOrder(order.WorkOrderNo);
+            _workOrderNo.Clear();
             _setStatus("작업지시 생성: " + order.WorkOrderNo);
         }
 
@@ -109,12 +117,18 @@ namespace MesProj.Controls
         {
             var order = GetSelectedOrder();
             if (order == null) return;
+            if (order.Status != WorkOrderStatus.Created)
+            {
+                _setStatus("생성 상태의 작업지시만 시작할 수 있습니다: " + order.WorkOrderNo);
+                return;
+            }
+
             order.Status = WorkOrderStatus.Running;
             order.StartedAt = DateTime.Now;
             _repository.Update(order);
             _stateService.SetCurrentWorkOrder(order);
             RefreshGrid();
-            _setStatus("작업 시작: " + order.WorkOrderNo);
+            _setStatus("작업 준비 완료: " + order.WorkOrderNo + " (설비 제어에서 별도로 가동하세요.)");
         }
 
         private void CompleteWorkOrder(object sender, EventArgs e)
@@ -146,7 +160,7 @@ namespace MesProj.Controls
         {
             return new WorkOrder
             {
-                WorkOrderNo = string.IsNullOrWhiteSpace(_workOrderNo.Text) ? "WO-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") : _workOrderNo.Text.Trim(),
+                WorkOrderNo = string.IsNullOrWhiteSpace(_workOrderNo.Text) ? "WO-" + DateTime.Now.ToString("yyyyMMdd-HHmmssfff") : _workOrderNo.Text.Trim(),
                 ItemCode = string.IsNullOrWhiteSpace(_itemCode.Text) ? "ITEM-A" : _itemCode.Text.Trim(),
                 ItemName = string.IsNullOrWhiteSpace(_itemName.Text) ? "샘플 제품" : _itemName.Text.Trim(),
                 TargetQuantity = (int)_targetQuantity.Value,
@@ -169,6 +183,20 @@ namespace MesProj.Controls
         private void RefreshGrid()
         {
             _grid.DataSource = _repository.GetAll().ToList();
+        }
+
+        private void SelectWorkOrder(string workOrderNo)
+        {
+            foreach (DataGridViewRow row in _grid.Rows)
+            {
+                var order = row.DataBoundItem as WorkOrder;
+                if (order != null && order.WorkOrderNo == workOrderNo)
+                {
+                    row.Selected = true;
+                    _grid.CurrentCell = row.Cells[0];
+                    return;
+                }
+            }
         }
     }
 }

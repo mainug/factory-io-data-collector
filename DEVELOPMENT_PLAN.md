@@ -42,3 +42,12 @@ UI가 Modbus 주소를 직접 읽고 쓰지 않게 유지한다. 주소, 데이�
 - 제품 통과 센서는 상승 에지 한 번만 집계
 - Vision 결과 코드(정상/불량/색상/재질)의 숫자 규약 확정
 - 통신 단절 시 출력 유지/초기화 정책과 재연결 후 동기화 정책 확정
+
+## 현재 Factory I/O 씬 확인 결과
+
+- `ProductionLine.factoryio`는 XML 형식이므로 신호와 드라이버 채널 매핑을 자동 추출할 수 있다.
+- 씬 신호는 총 223개다: Binary Input 85, Binary Output 117, Analogue Input 8, Analogue Output 8, Int Input 1, Int Output 4.
+- 현재 저장된 실제 채널 매핑은 `SiemensS7PLCSIM`용 171개다.
+- `ModbusTCPServer`에는 아직 개별 신호 매핑이 없으며 기본 포인트 수가 Bit Input/Output 각 16개, Numeric Input/Output 각 8개로 설정돼 있다.
+- 따라서 WinForms 직접 제어를 시작하기 전에 Factory I/O 드라이버를 Modbus TCP Server로 전환하고 필요한 포인트 수를 확장한 뒤 태그를 매핑해야 한다.
+- [태그 요약](Docs/factoryio-tag-summary.md)과 [전체 CSV](Docs/factoryio-tag-map.csv)는 `Tools/Export-FactoryIoTags.ps1`로 다시 생성할 수 있다.

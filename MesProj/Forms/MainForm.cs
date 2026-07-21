@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.Linq;
 using System.Threading;
 using System.Windows.Forms;
 using MesProj.Controls;
@@ -42,6 +43,7 @@ namespace MesProj.Forms
 
             _factoryIoService.StatusChanged += FactoryIoServiceStatusChanged;
             _factoryIoService.CommunicationError += FactoryIoServiceCommunicationError;
+            _stateService.TargetQuantityReached += StateServiceTargetQuantityReached;
 
             InitializeLayout();
             _stateService.ApplyFactoryStatus(_factoryIoService.GetFactoryStatusAsync(CancellationToken.None).Result);
@@ -57,6 +59,7 @@ namespace MesProj.Forms
                 _clockTimer.Stop();
                 _factoryIoService.StatusChanged -= FactoryIoServiceStatusChanged;
                 _factoryIoService.CommunicationError -= FactoryIoServiceCommunicationError;
+                _stateService.TargetQuantityReached -= StateServiceTargetQuantityReached;
                 _factoryIoService.Dispose();
                 _telemetryService.Dispose();
                 _disposeCts.Dispose();
@@ -207,6 +210,33 @@ namespace MesProj.Forms
             _alarmRepository.Add(alarm);
             _stateService.AddAlarm(alarm);
             SetStatus(message);
+        }
+
+        private async void StateServiceTargetQuantityReached(object sender, EventArgs e)
+        {
+            try
+            {
+                var snapshot = _stateService.GetSnapshot();
+                var order = _workOrderRepository.GetAll().FirstOrDefault(x => x.WorkOrderNo == snapshot.Summary.CurrentWorkOrderNo);
+                if (order != null)
+                {
+                    order.Status = WorkOrderStatus.Completed;
+                    order.EndedAt = DateTime.Now;
+                    _workOrderRepository.Update(order);
+                    _productionResultRepository.SaveFromWorkOrder(order, snapshot.Summary.GoodQuantity, snapshot.Summary.DefectQuantity);
+                }
+
+                await _factoryIoService.StopAsync(_disposeCts.Token).ConfigureAwait(true);
+                SetStatus("목표 생산량에 도달하여 설비를 자동 정지했습니다.");
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("Automatic stop at target quantity failed.", ex);
+                SetStatus("목표 수량 자동 정지 실패: " + ex.Message);
+            }
         }
     }
 }

@@ -12,8 +12,15 @@ namespace MesProj.Services
         private readonly List<AlarmRecord> _alarms = new List<AlarmRecord>();
         private AppStateSnapshot _snapshot = new AppStateSnapshot();
         private WorkOrder _currentWorkOrder;
+        private int _lastFactoryQuantity;
+        private int _lastFactoryGoodQuantity;
+        private int _lastFactoryDefectQuantity;
+        private int _workOrderStartQuantity;
+        private int _workOrderStartGoodQuantity;
+        private int _workOrderStartDefectQuantity;
 
         public event EventHandler<AppStateSnapshot> StateChanged;
+        public event EventHandler TargetQuantityReached;
 
         public AppStateSnapshot GetSnapshot()
         {
@@ -30,12 +37,25 @@ namespace MesProj.Services
                 return;
             }
 
+            var targetReached = false;
             lock (_syncRoot)
             {
                 _snapshot.Summary.ConnectionState = status.ConnectionState;
-                _snapshot.Summary.CurrentQuantity = status.CurrentQuantity;
-                _snapshot.Summary.GoodQuantity = status.GoodQuantity;
-                _snapshot.Summary.DefectQuantity = status.DefectQuantity;
+                _lastFactoryQuantity = status.CurrentQuantity;
+                _lastFactoryGoodQuantity = status.GoodQuantity;
+                _lastFactoryDefectQuantity = status.DefectQuantity;
+                if (_currentWorkOrder == null)
+                {
+                    _snapshot.Summary.CurrentQuantity = status.CurrentQuantity;
+                    _snapshot.Summary.GoodQuantity = status.GoodQuantity;
+                    _snapshot.Summary.DefectQuantity = status.DefectQuantity;
+                }
+                else
+                {
+                    _snapshot.Summary.CurrentQuantity = Math.Max(0, status.CurrentQuantity - _workOrderStartQuantity);
+                    _snapshot.Summary.GoodQuantity = Math.Max(0, status.GoodQuantity - _workOrderStartGoodQuantity);
+                    _snapshot.Summary.DefectQuantity = Math.Max(0, status.DefectQuantity - _workOrderStartDefectQuantity);
+                }
                 _snapshot.Summary.IsRunning = status.IsRunning;
                 _snapshot.Summary.IsEmergencyStopped = status.IsEmergencyStopped;
                 _snapshot.Summary.OperationMode = status.OperationMode;
@@ -45,13 +65,22 @@ namespace MesProj.Services
                 if (_currentWorkOrder != null &&
                     _currentWorkOrder.Status == WorkOrderStatus.Running &&
                     _currentWorkOrder.TargetQuantity > 0 &&
-                    status.CurrentQuantity >= _currentWorkOrder.TargetQuantity)
+                    _snapshot.Summary.CurrentQuantity >= _currentWorkOrder.TargetQuantity)
                 {
                     CompleteCurrentWorkOrderCore();
+                    targetReached = true;
                 }
             }
 
             RaiseStateChanged();
+            if (targetReached)
+            {
+                var handler = TargetQuantityReached;
+                if (handler != null)
+                {
+                    handler(this, EventArgs.Empty);
+                }
+            }
         }
 
         public void SetCurrentWorkOrder(WorkOrder workOrder)
@@ -64,8 +93,14 @@ namespace MesProj.Services
             lock (_syncRoot)
             {
                 _currentWorkOrder = workOrder;
+                _workOrderStartQuantity = _lastFactoryQuantity;
+                _workOrderStartGoodQuantity = _lastFactoryGoodQuantity;
+                _workOrderStartDefectQuantity = _lastFactoryDefectQuantity;
                 _snapshot.Summary.CurrentWorkOrderNo = workOrder.WorkOrderNo;
                 _snapshot.Summary.TargetQuantity = workOrder.TargetQuantity;
+                _snapshot.Summary.CurrentQuantity = 0;
+                _snapshot.Summary.GoodQuantity = 0;
+                _snapshot.Summary.DefectQuantity = 0;
             }
 
             RaiseStateChanged();
