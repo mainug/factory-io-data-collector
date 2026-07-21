@@ -1,0 +1,16 @@
+# Local Factory I/O scenes
+*.factoryio
+
+# Reference Siemens TIA Portal project
+/ProductionLine_20220404_0842/
+
+# Visual Studio and .NET build outputs
+.vs/
+**/bin/
+**/obj/
+*.user
+*.suo
+
+# Runtime-generated local files
+MesProj.log
+communication-settings.json
