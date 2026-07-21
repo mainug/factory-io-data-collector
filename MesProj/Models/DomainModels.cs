@@ -183,4 +183,26 @@ namespace MesProj.Models
             RecentAlarms = new List<AlarmRecord>();
         }
     }
+
+    public sealed class TelemetrySample
+    {
+        public DateTime Timestamp { get; set; }
+        public bool IsRunning { get; set; }
+        public bool IsEmergencyStopped { get; set; }
+        public int TotalQuantity { get; set; }
+        public int GoodQuantity { get; set; }
+        public int DefectQuantity { get; set; }
+        public int FaultEquipmentCount { get; set; }
+    }
+
+    public sealed class TelemetryAnalysis
+    {
+        public int SampleCount { get; set; }
+        public double RunRatePercent { get; set; }
+        public double YieldRatePercent { get; set; }
+        public double UnitsPerMinute { get; set; }
+        public int FaultSampleCount { get; set; }
+        public DateTime? FirstSampleAt { get; set; }
+        public DateTime? LastSampleAt { get; set; }
+    }
 }

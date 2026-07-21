@@ -64,6 +64,9 @@
     <Compile Include="Controls\DashboardControl.cs">
       <SubType>UserControl</SubType>
     </Compile>
+    <Compile Include="Controls\DataAnalysisControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
     <Compile Include="Controls\EquipmentControlControl.cs">
       <SubType>UserControl</SubType>
     </Compile>
@@ -92,6 +95,7 @@
     <Compile Include="Services\JsonSettingsService.cs" />
     <Compile Include="Services\MockFactoryIoService.cs" />
     <Compile Include="Services\ModbusFactoryIoService.cs" />
+    <Compile Include="Services\TelemetryService.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <EmbeddedResource Include="Properties\Resources.resx">

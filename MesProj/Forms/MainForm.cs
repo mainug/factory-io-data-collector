@@ -18,6 +18,7 @@ namespace MesProj.Forms
         private readonly IWorkOrderRepository _workOrderRepository;
         private readonly IProductionResultRepository _productionResultRepository;
         private readonly IAlarmRepository _alarmRepository;
+        private readonly ITelemetryService _telemetryService;
         private readonly CancellationTokenSource _disposeCts = new CancellationTokenSource();
         private readonly Panel _contentPanel = new Panel();
         private readonly StatusStrip _statusStrip = new StatusStrip();
@@ -37,6 +38,7 @@ namespace MesProj.Forms
             _workOrderRepository = new MockWorkOrderRepository();
             _productionResultRepository = new MockProductionResultRepository();
             _alarmRepository = new MockAlarmRepository();
+            _telemetryService = new CsvTelemetryService(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Data"));
 
             _factoryIoService.StatusChanged += FactoryIoServiceStatusChanged;
             _factoryIoService.CommunicationError += FactoryIoServiceCommunicationError;
@@ -56,6 +58,7 @@ namespace MesProj.Forms
                 _factoryIoService.StatusChanged -= FactoryIoServiceStatusChanged;
                 _factoryIoService.CommunicationError -= FactoryIoServiceCommunicationError;
                 _factoryIoService.Dispose();
+                _telemetryService.Dispose();
                 _disposeCts.Dispose();
                 _clockTimer.Dispose();
             }
@@ -114,6 +117,7 @@ namespace MesProj.Forms
             AddMenuButton(menu, "설비 제어", delegate { ShowControl(new EquipmentControlControl(_factoryIoService, _settingsService, _stateService, GetOptions, SetStatus)); });
             AddMenuButton(menu, "작업지시", delegate { ShowControl(new WorkOrderControl(_workOrderRepository, _productionResultRepository, _stateService, SetStatus)); });
             AddMenuButton(menu, "생산실적", delegate { ShowControl(new ProductionResultControl(_productionResultRepository)); });
+            AddMenuButton(menu, "데이터 분석", delegate { ShowControl(new DataAnalysisControl(_telemetryService)); });
             AddMenuButton(menu, "알람 이력", delegate { ShowControl(new AlarmHistoryControl(_alarmRepository, _stateService, SetStatus)); });
             AddMenuButton(menu, "통신 설정", delegate { ShowControl(new CommunicationSettingsControl(_settingsService, GetOptions, SetOptions, SetStatus)); });
 
@@ -184,6 +188,7 @@ namespace MesProj.Forms
 
         private void FactoryIoServiceStatusChanged(object sender, FactoryStatus status)
         {
+            _telemetryService.Record(status);
             _stateService.ApplyFactoryStatus(status);
         }
 
