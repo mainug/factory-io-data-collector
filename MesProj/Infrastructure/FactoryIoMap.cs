@@ -37,6 +37,7 @@ namespace MesProj.Infrastructure
         public static readonly EquipmentDefinition MachiningStart = new EquipmentDefinition("MachiningStart", "Machining Center Start", 2, -1, true);
         public static readonly EquipmentDefinition MachiningStop = new EquipmentDefinition("MachiningStop", "Machining Center Stop", 3, -1, true);
         public static readonly EquipmentDefinition MachiningReset = new EquipmentDefinition("MachiningReset", "Machining Center Reset", 4, -1, true);
+        public static readonly EquipmentDefinition ExitBeltSorter1 = new EquipmentDefinition("ExitBeltSorter1", "Exit Belt Sorter 1", 5);
         public static readonly EquipmentDefinition MachiningEntranceSensor = new EquipmentDefinition("MachiningEntranceSensor", "Stop Entrance Belt Sensor", -1, 0);
         public static readonly EquipmentDefinition MachiningBusy = new EquipmentDefinition("MachiningBusy", "Machining Center Is Busy", -1, 1);
         public static readonly EquipmentDefinition MachiningError = new EquipmentDefinition("MachiningError", "Machining Center Has Error", -1, 2);

@@ -10,14 +10,15 @@ namespace MesProj.Services
 {
     public sealed class ModbusFactoryIoService : IFactoryIoService
     {
-        private const int EntranceBeltStopDelayMilliseconds = 700;
+        private const int EntranceBeltStopDelayMilliseconds = 1500;
         private readonly ModbusTcpClient _client = new ModbusTcpClient();
         private readonly object _syncRoot = new object();
         private readonly Dictionary<string, EquipmentStatus> _statuses = new Dictionary<string, EquipmentStatus>();
         private readonly HashSet<string> _initializedSensors = new HashSet<string>();
         private readonly EquipmentDefinition[] _definitions =
         {
-            FactoryIoMap.MachiningEntranceBelt, FactoryIoMap.MachiningProductType, FactoryIoMap.MachiningStart,
+            FactoryIoMap.MachiningEntranceBelt, FactoryIoMap.MachiningProductType, FactoryIoMap.ExitBeltSorter1,
+            FactoryIoMap.MachiningStart, FactoryIoMap.MachiningStop, FactoryIoMap.MachiningReset,
             FactoryIoMap.MachiningEntranceSensor, FactoryIoMap.MachiningBusy, FactoryIoMap.MachiningError,
             FactoryIoMap.MachiningOpened, FactoryIoMap.MachiningOutputSensor
         };
@@ -25,6 +26,7 @@ namespace MesProj.Services
         private Task _pollingTask;
         private int _pollingIntervalMilliseconds = 1000;
         private int _machiningProgress;
+        private bool _restartEntranceBeltWhenBusy;
         public event EventHandler<FactoryStatus> StatusChanged;
         public event EventHandler<string> CommunicationError;
         public event EventHandler<ProcessEvent> ProcessEventOccurred;
@@ -51,6 +53,7 @@ namespace MesProj.Services
                 lock (_syncRoot)
                 {
                     _initializedSensors.Clear();
+                    _restartEntranceBeltWhenBusy = false;
                     foreach (var status in _statuses.Values)
                     {
                         status.State = EquipmentState.Stopped;
@@ -82,6 +85,7 @@ namespace MesProj.Services
                     status.FeedbackState = false;
                     status.LastChangedAt = DateTime.Now;
                 }
+                _restartEntranceBeltWhenBusy = false;
             }
             RaiseStatus();
             return Task.FromResult(0);
@@ -122,6 +126,10 @@ namespace MesProj.Services
                 status.CommandState = value;
                 status.State = value ? EquipmentState.Running : EquipmentState.Stopped;
                 status.LastChangedAt = DateTime.Now;
+                if (address == FactoryIoMap.MachiningStart.OutputAddress && value)
+                    _restartEntranceBeltWhenBusy = true;
+                if ((address == FactoryIoMap.MachiningStop.OutputAddress || address == FactoryIoMap.MachiningReset.OutputAddress) && value)
+                    _restartEntranceBeltWhenBusy = false;
             }
             RaiseStatus();
         }
@@ -213,17 +221,19 @@ namespace MesProj.Services
                         }
                         if (risingEdge) RaiseProcessEvent(definition);
 
-                        if (definition.Key == FactoryIoMap.MachiningBusy.Key && risingEdge)
+                        if (definition.Key == FactoryIoMap.MachiningBusy.Key && sensor)
                         {
                             var entranceOccupied = false;
                             var beltIsRunning = false;
+                            var restartRequested = false;
                             lock (_syncRoot)
                             {
                                 entranceOccupied = _statuses[FactoryIoMap.MachiningEntranceSensor.Key].FeedbackState;
                                 beltIsRunning = _statuses[FactoryIoMap.MachiningEntranceBelt.Key].CommandState;
+                                restartRequested = _restartEntranceBeltWhenBusy;
                             }
 
-                            if (!entranceOccupied && !beltIsRunning)
+                            if (restartRequested && !entranceOccupied && !beltIsRunning)
                             {
                                 await _client.WriteSingleCoilAsync(
                                     (ushort)FactoryIoMap.MachiningEntranceBelt.OutputAddress,
@@ -235,6 +245,7 @@ namespace MesProj.Services
                                     belt.CommandState = true;
                                     belt.State = EquipmentState.Running;
                                     belt.LastChangedAt = DateTime.Now;
+                                    _restartEntranceBeltWhenBusy = false;
                                 }
                             }
                         }

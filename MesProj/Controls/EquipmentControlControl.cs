@@ -25,7 +25,13 @@ namespace MesProj.Controls
         private readonly Label _machiningProgressLabel = new Label();
         private readonly ProgressBar _machiningProgressBar = new ProgressBar();
         private readonly Button _machiningStartButton = new Button();
+        private readonly Button _machiningStopButton = new Button();
+        private readonly Button _machiningResetButton = new Button();
         private bool _materialReady;
+        private bool _automaticMachiningEnabled;
+        private bool _startPulseInProgress;
+        private bool _startAwaitingBusy;
+        private DateTime _lastStartPulseAt = DateTime.MinValue;
 
         public EquipmentControlControl(IFactoryIoService factoryIoService, ISettingsService settingsService, IApplicationStateService stateService, Func<CommunicationOptions> getOptions, Action<string> setStatus)
         {
@@ -79,6 +85,16 @@ namespace MesProj.Controls
             _machiningStartButton.Height = 36;
             _machiningStartButton.Click += MachiningStartButtonClick;
             operationLayout.Controls.Add(_machiningStartButton);
+            _machiningStopButton.Text = "가공 정지";
+            _machiningStopButton.Width = 122;
+            _machiningStopButton.Height = 36;
+            _machiningStopButton.Click += MachiningStopButtonClick;
+            operationLayout.Controls.Add(_machiningStopButton);
+            _machiningResetButton.Text = "오류 리셋";
+            _machiningResetButton.Width = 122;
+            _machiningResetButton.Height = 36;
+            _machiningResetButton.Click += MachiningResetButtonClick;
+            operationLayout.Controls.Add(_machiningResetButton);
             operationGroup.Controls.Add(operationLayout);
 
             var equipmentGroup = new GroupBox { Text = "가공 도입부 I/O", Dock = DockStyle.Fill, Font = new Font("맑은 고딕", 10, FontStyle.Bold) };
@@ -165,41 +181,105 @@ namespace MesProj.Controls
 
         private async void MachiningStartButtonClick(object sender, EventArgs e)
         {
-            var snapshot = _stateService.GetSnapshot();
-            var busy = snapshot.EquipmentStatuses.FirstOrDefault(x => x.Key == "MachiningBusy");
-            var error = snapshot.EquipmentStatuses.FirstOrDefault(x => x.Key == "MachiningError");
+            if (_automaticMachiningEnabled)
+            {
+                _automaticMachiningEnabled = false;
+                _startAwaitingBusy = false;
+                _machiningStartButton.Text = "자동 가공 시작";
+                _setStatus("자동 가공 모드가 중지되었습니다.");
+                return;
+            }
 
+            var snapshot = _stateService.GetSnapshot();
             if (snapshot.Summary.ConnectionState != FactoryConnectionState.Connected)
             {
                 _setStatus("Factory I/O 연결 후 가공을 시작할 수 있습니다.");
                 return;
             }
 
-            if (!_materialReady)
-            {
-                _setStatus("가공 입구를 통과한 원소재가 없습니다.");
-                return;
-            }
+            _automaticMachiningEnabled = true;
+            _machiningStartButton.Text = "자동 가공 중지";
+            _setStatus(_materialReady
+                ? "자동 가공 모드가 시작되었습니다."
+                : "자동 가공 모드가 시작되었습니다. 원소재를 기다리는 중입니다.");
+            await TryStartMachiningAsync(snapshot);
+        }
 
-            if ((busy != null && busy.FeedbackState) || (error != null && error.FeedbackState))
-            {
-                _setStatus("가공기가 동작 중이거나 오류 상태입니다.");
+        private async Task TryStartMachiningAsync(AppStateSnapshot snapshot)
+        {
+            var machiningBusy = snapshot.EquipmentStatuses.Any(x => x.Key == "MachiningBusy" && x.FeedbackState);
+            var machiningError = snapshot.EquipmentStatuses.Any(x => x.Key == "MachiningError" && x.FeedbackState);
+            if (!_automaticMachiningEnabled || _startPulseInProgress || !_materialReady || machiningBusy || machiningError)
                 return;
-            }
+            if (_startAwaitingBusy && DateTime.Now - _lastStartPulseAt < TimeSpan.FromSeconds(3))
+                return;
 
+            _startPulseInProgress = true;
+            try
+            {
+                using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+                {
+                    await _factoryIoService.WriteCoilAsync(2, true, cts.Token);
+                    _startAwaitingBusy = true;
+                    _lastStartPulseAt = DateTime.Now;
+                    try
+                    {
+                        await Task.Delay(200, cts.Token);
+                    }
+                    finally
+                    {
+                        await _factoryIoService.WriteCoilAsync(2, false, CancellationToken.None);
+                    }
+                }
+                _setStatus("자동 가공 시작 신호 전송 완료");
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("Automatic machining start failed.", ex);
+                _setStatus(ex.Message);
+            }
+            finally
+            {
+                _startPulseInProgress = false;
+            }
+        }
+
+        private async void MachiningStopButtonClick(object sender, EventArgs e)
+        {
+            _automaticMachiningEnabled = false;
+            _startAwaitingBusy = false;
+            _machiningStartButton.Text = "자동 가공 시작";
+            await SendPulseAsync(FactoryIoMap.MachiningStop.OutputAddress, "가공 정지 신호 전송 완료");
+        }
+
+        private async void MachiningResetButtonClick(object sender, EventArgs e)
+        {
+            _automaticMachiningEnabled = false;
+            _materialReady = false;
+            _startAwaitingBusy = false;
+            _machiningStartButton.Text = "자동 가공 시작";
+            await SendPulseAsync(FactoryIoMap.MachiningReset.OutputAddress, "가공기 리셋 신호 전송 완료");
+        }
+
+        private async Task SendPulseAsync(int address, string successMessage)
+        {
             await RunCommandAsync(async ct =>
             {
-                await _factoryIoService.WriteCoilAsync(2, true, ct);
+                await _factoryIoService.WriteCoilAsync(address, true, ct);
                 try
                 {
                     await Task.Delay(200, ct);
                 }
                 finally
                 {
-                    await _factoryIoService.WriteCoilAsync(2, false, CancellationToken.None);
+                    await _factoryIoService.WriteCoilAsync(address, false, CancellationToken.None);
                 }
-            }, "가공 시작 신호 전송 완료");
-            _materialReady = false;
+            }, successMessage);
+        }
+
+        private async void BeginAutomaticMachiningStart(AppStateSnapshot snapshot)
+        {
+            await TryStartMachiningAsync(snapshot);
         }
 
         private async Task RunCommandAsync(Func<CancellationToken, Task> command, string successMessage)
@@ -244,6 +324,8 @@ namespace MesProj.Controls
             if (snapshot.Summary.ConnectionState != FactoryConnectionState.Connected)
             {
                 _materialReady = false;
+                _automaticMachiningEnabled = false;
+                _startAwaitingBusy = false;
             }
             if (entranceReady)
             {
@@ -251,8 +333,19 @@ namespace MesProj.Controls
             }
             var machiningBusy = snapshot.EquipmentStatuses.Any(x => x.Key == "MachiningBusy" && x.FeedbackState);
             var machiningError = snapshot.EquipmentStatuses.Any(x => x.Key == "MachiningError" && x.FeedbackState);
-            _machiningStartButton.Enabled = snapshot.Summary.ConnectionState == FactoryConnectionState.Connected
-                && _materialReady && !machiningBusy && !machiningError;
+            if (_startAwaitingBusy && machiningBusy)
+            {
+                _startAwaitingBusy = false;
+                _materialReady = false;
+            }
+            _machiningStartButton.Text = _automaticMachiningEnabled ? "자동 가공 중지" : "자동 가공 시작";
+            _machiningStartButton.Enabled = snapshot.Summary.ConnectionState == FactoryConnectionState.Connected;
+            _machiningStopButton.Enabled = snapshot.Summary.ConnectionState == FactoryConnectionState.Connected;
+            _machiningResetButton.Enabled = snapshot.Summary.ConnectionState == FactoryConnectionState.Connected;
+            if (_automaticMachiningEnabled && _materialReady && !machiningBusy && !machiningError)
+            {
+                BeginAutomaticMachiningStart(snapshot);
+            }
             var equipmentRows = snapshot.EquipmentStatuses
                 .Where(x => x.OutputAddress >= 0 && !x.IsPulseOutput)
                 .Select(x => new EquipmentRow(x))
@@ -326,7 +419,9 @@ namespace MesProj.Controls
             public EquipmentRow(EquipmentStatus status)
             {
                 Name = status.Name;
-                Section = status.OutputAddress == 0 ? "원소재 이송" : "가공 종류 설정";
+                Section = status.OutputAddress == 0
+                    ? "원소재 이송"
+                    : (status.Key == "ExitBeltSorter1" ? "가공품 배출" : "가공 종류 설정");
                 CommandState = status.CommandState;
                 FeedbackState = status.FeedbackState;
                 OutputAddress = status.OutputAddress;
