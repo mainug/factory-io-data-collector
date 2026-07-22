@@ -224,6 +224,33 @@ MesProj\bin\Debug\Data\process_events_yyyyMMdd.csv
 6. 입구와 로봇 작업 영역에 소재가 겹치지 않았는지 확인한다.
 7. `자동 가공 시작`을 다시 누른다. 입구가 비어 있으면 Entrance belt가 자동으로 ON된다.
 
+## Has Error가 설비 Reset으로 해제되지 않는 문제
+
+현상: 로봇이 소재를 정상 위치 밖으로 던진 뒤 `Machining Center (Has Error)`가 ON됐다. 튕겨 나간 소재를 제거하고 가공기 내부, 로봇 그리퍼 및 픽업 위치가 모두 비어 있는 것을 확인했지만 Has Error가 유지됐다.
+
+확인 결과:
+
+- WinForms의 오류 리셋은 Coil 4를 약 200ms 동안 정상적으로 ON→OFF했다.
+- Factory I/O에서 `Machining Center (Reset)`을 직접 Forced로 약 1초 ON한 뒤 OFF해도 해제되지 않았다.
+- 가공기 옆 현장 제어반의 Reset 버튼도 효과가 없었다.
+- Busy는 OFF였지만 Has Error만 ON으로 래치된 상태였다.
+- 물리적으로 걸리거나 가공기 내부에 남아 있는 소재는 없었다.
+
+판단: Modbus 주소, WinForms 명령 및 Reset 펄스 길이의 문제가 아니라 Factory I/O Machining Center 내부 상태가 일반 설비 Reset으로 복구되지 않는 씬 수준의 고착 상태로 판단한다.
+
+최종 조치: Factory I/O 상단 도구 모음의 원형 화살표 `씬 Reset`을 사용하여 전체 시뮬레이션을 초기화했다.
+
+복구 단계 구분:
+
+1. 일반 Busy 고착 또는 사이클 오류는 WinForms의 `오류 리셋`으로 1차 복구한다.
+2. Has Error가 유지되면 소재 잔류와 로봇 작업 영역을 확인하고 현장 Reset을 시험한다.
+3. Coil 4 Reset, 직접 Forced Reset 및 현장 Reset이 모두 실패하면 Reset을 반복하지 않는다.
+4. 자동 운전을 중지하고 Factory I/O `씬 Reset`으로 단계 상승한다.
+5. 씬 Reset 후 Has Error OFF, Busy OFF, Opened ON, Modbus 연결 및 Entrance Emitter 설정을 확인한다.
+6. 생성 주기 약 40초와 Forced 상태가 유지되는지 확인한 뒤 자동 가공을 다시 시작한다.
+
+주의: 씬 Reset은 설비 한 대가 아니라 전체 시뮬레이션 상태와 소재 위치에 영향을 줄 수 있으므로 최후 복구 수단으로 사용한다. Has Error 입력에 고장 주입 또는 강제 ON이 설정된 경우에는 씬 Reset 전에 해당 설정도 해제해야 한다.
+
 ## 화면 전환 시 자동 가공이 해제되는 문제
 
 현상: 장시간 운전 중 데이터 분석 화면으로 이동하면 알람 없이 자동 가공 버튼이 `자동 가공 시작`으로 돌아가고 다음 소재에서 공정이 멈췄다.
