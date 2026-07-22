@@ -92,7 +92,7 @@ Factory I/O의 가공 도입부와 WinForms MES를 Modbus TCP로 연동하면서
 
 초기 조치: Start 요청 상태를 기억하고 Busy 확인 시 벨트를 재가동하도록 변경했다.
 
-후속 조치: 다음 소재가 가공 중 미리 진입하는 문제를 줄이기 위해 Busy 직후 재가동 방식을 폐기했다. 현재는 가공 시작 후 `Opened OFF → Opened ON` 전환을 확인한 다음 Entrance belt를 재가동한다.
+후속 조치: 다음 소재가 가공 중 미리 진입하는 문제를 줄이기 위해 Busy 직후 및 Opened ON 직후 재가동 방식을 모두 폐기했다. `Opened OFF → Opened ON`은 정상 사이클 확인에만 사용하며, 현재는 가공 사이클의 최종 `Busy OFF`를 확인한 다음 Entrance belt를 재가동한다.
 
 ### 8. 한 번씩 가공 Start가 무시되고 다음 소재가 와야 시작됨
 
@@ -118,7 +118,7 @@ Factory I/O의 가공 도입부와 WinForms MES를 Modbus TCP로 연동하면서
 조치:
 
 - 소재 생성 주기를 현재 약 40초로 조정했다.
-- Entrance belt 재가동 시점을 가공기 완료 전환 뒤로 이동했다.
+- Entrance belt 재가동 시점을 가공기의 최종 Busy OFF 뒤로 이동했다.
 - Forced Emitter 방식에서는 WinForms가 소재 생성을 직접 차단할 수 없으므로 장시간 정지 시 누적 가능성이 남아 있다.
 
 ### 10. 가공품 누적과 Busy 유지
@@ -147,9 +147,11 @@ Factory I/O의 가공 도입부와 WinForms MES를 Modbus TCP로 연동하면서
   → Opened OFF 확인
   → Opened ON 재확인
   → Busy OFF 최종 확인
-  → Entrance belt 재가동
+  → 정상 사이클이면 Entrance belt 재가동
   → 다음 소재 대기
 ```
+
+Reset 복구 경로에서는 위 정상 흐름과 달리 Entrance belt를 즉시 재가동하지 않는다. Reset 즉시 벨트를 끄고, Busy OFF 후 5초 안정화가 끝난 다음 작업자가 자동 가공 모드를 다시 시작한다.
 
 ## 로그 수집
 
@@ -197,19 +199,30 @@ MesProj\bin\Debug\Data\process_events_yyyyMMdd.csv
 
 ## Busy 고착 Reset 복구 확인
 
-고착 상태에서 Stop 펄스를 두 차례 전송했지만 Busy는 해제되지 않았다. Reset 펄스 전송 후 로봇이 소재를 꺼내 배출했고, Write Sensor가 ON→OFF된 다음 Busy가 OFF됐다. 따라서 Reset은 단순 오류 비트 초기화가 아니라 진행 중인 고착 사이클을 강제 배출 및 종료시키는 효과가 있다.
+고착 상태에서 Stop 펄스를 두 차례 전송했지만 Busy는 해제되지 않았다. Reset 펄스 전송 후 로봇이 소재를 꺼내 배출하고 Busy가 OFF됐다. 일부 시험에서는 Write Sensor가 ON→OFF됐지만 다른 시험에서는 Write Sensor 반응 없이 Busy만 OFF됐다. 따라서 Reset은 단순 오류 비트 초기화가 아니라 진행 중인 고착 사이클을 강제 배출 및 종료시키는 효과가 있으며, Write Sensor만으로 복구 완료를 판단해서는 안 된다.
 
 자동 보호 로직:
 
 - Opened ON 이후 Busy가 30초 이상 유지되면 `MACHINING_BUSY_TIMEOUT` Warning 알람 발생
 - 타임아웃 발생 시 WinForms 자동 가공 모드 해제
 - 작업자가 상태 확인 후 Reset 수행
-- Reset 이후 Write Sensor 상승 이벤트를 `Aborted`로 기록
+- Reset 이후 Write Sensor가 반응하면 상승 이벤트를 `Aborted`로 기록
+- Write Sensor가 반응하지 않는 복구도 있으므로 Busy OFF를 기본 복구 완료 신호로 사용
 - Busy OFF 시 복구 완료를 상세 로그에 기록
 - Reset 신호를 전송하는 즉시 Entrance belt를 OFF하여 복구 중 신규 소재 유입을 차단한다.
 - Reset 이후 Busy OFF가 되어도 로봇 배출 및 복귀 시간을 고려해 5초 동안 안정화한 뒤 복구 완료로 처리한다.
 - Reset은 자동 가공 모드를 해제하며, 작업자가 다시 `자동 가공 시작`을 누르면 입구가 비어 있는 경우 Entrance belt를 자동 재가동한다.
 - 복구 뒤 자동 가공은 작업자가 직접 다시 시작
+
+확정된 작업자 복구 순서:
+
+1. `MACHINING_BUSY_TIMEOUT` 알람과 실제 설비 상태를 확인한다.
+2. 필요하면 Stop을 누르되, Stop만으로 Busy가 해제되지 않을 수 있음을 인지한다.
+3. Reset을 누른다. 이때 Entrance belt는 즉시 OFF되어 신규 소재 유입이 차단된다.
+4. 로봇이 기존 소재를 배출하고 Busy가 OFF될 때까지 기다린다.
+5. Busy OFF 후 5초 안정화가 완료될 때까지 기다린다.
+6. 입구와 로봇 작업 영역에 소재가 겹치지 않았는지 확인한다.
+7. `자동 가공 시작`을 다시 누른다. 입구가 비어 있으면 Entrance belt가 자동으로 ON된다.
 
 ## 화면 전환 시 자동 가공이 해제되는 문제
 
@@ -230,3 +243,21 @@ MesProj\bin\Debug\Data\process_events_yyyyMMdd.csv
 - Entrance belt 재가동 조건을 Opened ON에서 Busy OFF로 변경했다.
 - 가공 중에는 다음 소재를 픽업 구간으로 보내지 않는다.
 - 복구 테스트 전 로봇 입구에 겹친 소재를 제거하고 Stop 및 Reset을 수행한다.
+
+## 가공 공정 확정 상태
+
+2026-07-22 기준으로 가공 도입부부터 Machining Center 배출까지의 제어와 복구 절차를 검증했다. 이후 기능 개발에서는 재현 가능한 신규 문제가 발생하지 않는 한 이 구간의 로직을 변경하지 않는다.
+
+확정 항목:
+
+- Entrance Emitter Forced, 생성 주기 약 40초
+- 입구 센서 감지 후 1,500ms 지연 정지
+- Busy 응답 기반 Start 승인과 3초 미응답 재시도
+- 최종 Busy OFF 이후에만 다음 소재 투입
+- Opened ON 이후 Busy 30초 유지 시 고착 알람
+- Reset 시 입구 벨트 즉시 차단
+- Reset 복구 Busy OFF 후 5초 안정화
+- 복구 후 작업자가 자동 가공 모드를 다시 시작
+- 화면 전환 중에도 자동 운전 및 감시 상태 유지
+
+다음 개발 범위는 Write Sensor 이후의 가공품 인계, Exit Belt Sorter 1 운전, 카메라 판별, 색상·형태 분류 및 적재 공정이다.
