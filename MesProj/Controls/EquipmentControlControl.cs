@@ -32,6 +32,7 @@ namespace MesProj.Controls
         private bool _startPulseInProgress;
         private bool _startAwaitingBusy;
         private DateTime _lastStartPulseAt = DateTime.MinValue;
+        private DateTime _lastHandledBusyTimeoutAt = DateTime.MinValue;
 
         public EquipmentControlControl(IFactoryIoService factoryIoService, ISettingsService settingsService, IApplicationStateService stateService, Func<CommunicationOptions> getOptions, Action<string> setStatus)
         {
@@ -202,6 +203,30 @@ namespace MesProj.Controls
             _setStatus(_materialReady
                 ? "자동 가공 모드가 시작되었습니다."
                 : "자동 가공 모드가 시작되었습니다. 원소재를 기다리는 중입니다.");
+            var entranceOccupied = snapshot.EquipmentStatuses.Any(x => x.Key == "MachiningEntranceSensor" && x.FeedbackState);
+            var entranceBeltRunning = snapshot.EquipmentStatuses.Any(x => x.Key == "MachiningEntranceBelt" && x.CommandState);
+            if (!entranceOccupied && !entranceBeltRunning)
+            {
+                try
+                {
+                    using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+                    {
+                        await _factoryIoService.WriteCoilAsync(
+                            FactoryIoMap.MachiningEntranceBelt.OutputAddress,
+                            true,
+                            cts.Token);
+                    }
+                    _setStatus("자동 가공 모드가 시작되었습니다. 원소재를 기다리는 중입니다.");
+                }
+                catch (Exception ex)
+                {
+                    _automaticMachiningEnabled = false;
+                    _machiningStartButton.Text = "자동 가공 시작";
+                    AppLogger.Error("Automatic entrance belt start failed.", ex);
+                    _setStatus(ex.Message);
+                    return;
+                }
+            }
             await TryStartMachiningAsync(snapshot);
         }
 
@@ -209,7 +234,8 @@ namespace MesProj.Controls
         {
             var machiningBusy = snapshot.EquipmentStatuses.Any(x => x.Key == "MachiningBusy" && x.FeedbackState);
             var machiningError = snapshot.EquipmentStatuses.Any(x => x.Key == "MachiningError" && x.FeedbackState);
-            if (!_automaticMachiningEnabled || _startPulseInProgress || !_materialReady || machiningBusy || machiningError)
+            var machiningOpened = snapshot.EquipmentStatuses.Any(x => x.Key == "MachiningOpened" && x.FeedbackState);
+            if (!_automaticMachiningEnabled || _startPulseInProgress || !_materialReady || machiningBusy || machiningError || !machiningOpened)
                 return;
             if (_startAwaitingBusy && DateTime.Now - _lastStartPulseAt < TimeSpan.FromSeconds(3))
                 return;
@@ -307,6 +333,17 @@ namespace MesProj.Controls
 
         private void Render(AppStateSnapshot snapshot)
         {
+            var busyTimeout = snapshot.RecentAlarms
+                .Where(x => x.AlarmCode == "MACHINING_BUSY_TIMEOUT")
+                .OrderByDescending(x => x.OccurredAt)
+                .FirstOrDefault();
+            if (busyTimeout != null && busyTimeout.OccurredAt > _lastHandledBusyTimeoutAt)
+            {
+                _lastHandledBusyTimeoutAt = busyTimeout.OccurredAt;
+                _automaticMachiningEnabled = false;
+                _startAwaitingBusy = false;
+                _setStatus(busyTimeout.Message);
+            }
             var options = _getOptions();
             _connectionLabel.Text = "연결 상태: " + snapshot.Summary.ConnectionState;
             _connectionLabel.AutoSize = true;

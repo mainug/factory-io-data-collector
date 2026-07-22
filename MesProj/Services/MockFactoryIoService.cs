@@ -23,6 +23,7 @@ namespace MesProj.Services
         public event EventHandler<FactoryStatus> StatusChanged;
         public event EventHandler<string> CommunicationError;
         public event EventHandler<ProcessEvent> ProcessEventOccurred;
+        public event EventHandler<AlarmRecord> AlarmOccurred;
 
         public FactoryConnectionState ConnectionState
         {

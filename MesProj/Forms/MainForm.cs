@@ -26,6 +26,7 @@ namespace MesProj.Forms
         private readonly ToolStripStatusLabel _statusLabel = new ToolStripStatusLabel();
         private readonly Label _clockLabel = new Label();
         private readonly System.Windows.Forms.Timer _clockTimer = new System.Windows.Forms.Timer();
+        private readonly EquipmentControlControl _equipmentControl;
         private CommunicationOptions _options;
 
         public MainForm()
@@ -40,10 +41,12 @@ namespace MesProj.Forms
             _productionResultRepository = new MockProductionResultRepository();
             _alarmRepository = new MockAlarmRepository();
             _telemetryService = new CsvTelemetryService(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Data"));
+            _equipmentControl = new EquipmentControlControl(_factoryIoService, _settingsService, _stateService, GetOptions, SetStatus);
 
             _factoryIoService.StatusChanged += FactoryIoServiceStatusChanged;
             _factoryIoService.CommunicationError += FactoryIoServiceCommunicationError;
             _factoryIoService.ProcessEventOccurred += FactoryIoServiceProcessEventOccurred;
+            _factoryIoService.AlarmOccurred += FactoryIoServiceAlarmOccurred;
             _stateService.TargetQuantityReached += StateServiceTargetQuantityReached;
 
             InitializeLayout();
@@ -61,9 +64,11 @@ namespace MesProj.Forms
                 _factoryIoService.StatusChanged -= FactoryIoServiceStatusChanged;
                 _factoryIoService.CommunicationError -= FactoryIoServiceCommunicationError;
                 _factoryIoService.ProcessEventOccurred -= FactoryIoServiceProcessEventOccurred;
+                _factoryIoService.AlarmOccurred -= FactoryIoServiceAlarmOccurred;
                 _stateService.TargetQuantityReached -= StateServiceTargetQuantityReached;
                 _factoryIoService.Dispose();
                 _telemetryService.Dispose();
+                _equipmentControl.Dispose();
                 _disposeCts.Dispose();
                 _clockTimer.Dispose();
             }
@@ -119,7 +124,7 @@ namespace MesProj.Forms
             };
 
             AddMenuButton(menu, "대시보드", delegate { ShowControl(new DashboardControl(_stateService)); });
-            AddMenuButton(menu, "설비 제어", delegate { ShowControl(new EquipmentControlControl(_factoryIoService, _settingsService, _stateService, GetOptions, SetStatus)); });
+            AddMenuButton(menu, "설비 제어", delegate { ShowControl(_equipmentControl); });
             AddMenuButton(menu, "작업지시", delegate { ShowControl(new WorkOrderControl(_workOrderRepository, _productionResultRepository, _stateService, SetStatus)); });
             AddMenuButton(menu, "생산실적", delegate { ShowControl(new ProductionResultControl(_productionResultRepository)); });
             AddMenuButton(menu, "데이터 분석", delegate { ShowControl(new DataAnalysisControl(_telemetryService)); });
@@ -168,7 +173,8 @@ namespace MesProj.Forms
         {
             foreach (Control existing in _contentPanel.Controls)
             {
-                existing.Dispose();
+                if (!object.ReferenceEquals(existing, _equipmentControl))
+                    existing.Dispose();
             }
 
             _contentPanel.Controls.Clear();
@@ -218,6 +224,13 @@ namespace MesProj.Forms
         {
             _telemetryService.RecordProcessEvent(processEvent);
             SetStatus(string.Format("공정 이벤트: [{0}] {1}", processEvent.Stage, processEvent.SensorName));
+        }
+
+        private void FactoryIoServiceAlarmOccurred(object sender, AlarmRecord alarm)
+        {
+            _alarmRepository.Add(alarm);
+            _stateService.AddAlarm(alarm);
+            SetStatus(alarm.Message);
         }
 
         private async void StateServiceTargetQuantityReached(object sender, EventArgs e)
