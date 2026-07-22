@@ -61,6 +61,7 @@ namespace MesProj.Services
                 _snapshot.Summary.OperationMode = status.OperationMode;
                 _snapshot.EquipmentStatuses = status.EquipmentStatuses.Select(CloneEquipment).ToList();
                 _snapshot.LastCommunicationAt = status.LastCommunicationAt;
+                _snapshot.MachiningProgress = status.MachiningProgress;
 
                 if (_currentWorkOrder != null &&
                     _currentWorkOrder.Status == WorkOrderStatus.Running &&
@@ -203,7 +204,8 @@ namespace MesProj.Services
                 },
                 EquipmentStatuses = source.EquipmentStatuses.Select(CloneEquipment).ToList(),
                 RecentAlarms = source.RecentAlarms.Select(CloneAlarm).ToList(),
-                LastCommunicationAt = source.LastCommunicationAt
+                LastCommunicationAt = source.LastCommunicationAt,
+                MachiningProgress = source.MachiningProgress
             };
         }
 
@@ -217,6 +219,8 @@ namespace MesProj.Services
                 CommandState = source.CommandState,
                 FeedbackState = source.FeedbackState,
                 OutputAddress = source.OutputAddress,
+                InputAddress = source.InputAddress,
+                IsPulseOutput = source.IsPulseOutput,
                 LastChangedAt = source.LastChangedAt
             };
         }

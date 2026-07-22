@@ -47,6 +47,8 @@ namespace MesProj.Models
         public bool CommandState { get; set; }
         public bool FeedbackState { get; set; }
         public int OutputAddress { get; set; }
+        public int InputAddress { get; set; }
+        public bool IsPulseOutput { get; set; }
         public DateTime LastChangedAt { get; set; }
     }
 
@@ -60,6 +62,7 @@ namespace MesProj.Models
         public int CurrentQuantity { get; set; }
         public int GoodQuantity { get; set; }
         public int DefectQuantity { get; set; }
+        public int MachiningProgress { get; set; }
         public List<EquipmentStatus> EquipmentStatuses { get; set; }
 
         public FactoryStatus()
@@ -175,6 +178,7 @@ namespace MesProj.Models
         public List<EquipmentStatus> EquipmentStatuses { get; set; }
         public List<AlarmRecord> RecentAlarms { get; set; }
         public DateTime LastCommunicationAt { get; set; }
+        public int MachiningProgress { get; set; }
 
         public AppStateSnapshot()
         {
@@ -204,5 +208,15 @@ namespace MesProj.Models
         public int FaultSampleCount { get; set; }
         public DateTime? FirstSampleAt { get; set; }
         public DateTime? LastSampleAt { get; set; }
+    }
+
+    public sealed class ProcessEvent
+    {
+        public DateTime Timestamp { get; set; }
+        public string Stage { get; set; }
+        public string SensorKey { get; set; }
+        public string SensorName { get; set; }
+        public int InputAddress { get; set; }
+        public string EventType { get; set; }
     }
 }

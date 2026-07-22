@@ -1,5 +1,4 @@
 # Factory I/O local scenes and backups
-*.factoryio
 *.factoryio.bak
 *.factoryio.autosave
 

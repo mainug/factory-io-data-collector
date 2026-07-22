@@ -17,7 +17,32 @@ namespace MesProj.Infrastructure
         public static readonly EquipmentDefinition Sorter3Belt = new EquipmentDefinition("Sorter3Belt", "분류기 3 벨트", 8);
         public static readonly EquipmentDefinition VisionSensor = new EquipmentDefinition("VisionSensor", "비전 센서", -1);
         public static readonly EquipmentDefinition Emitter = new EquipmentDefinition("Emitter", "제품 생성기", 13);
-        public static readonly EquipmentDefinition BlueBaseBelt1Pilot = new EquipmentDefinition("BlueBaseBelt1", "Blue Base Belt 1", 0, 0);
+        public static readonly EquipmentDefinition BlueBaseBelt1 = new EquipmentDefinition("BlueBaseBelt1", "Blue Base Belt 1", 0);
+        public static readonly EquipmentDefinition BlueBaseBelt2 = new EquipmentDefinition("BlueBaseBelt2", "Blue Base Belt 2", 1);
+        public static readonly EquipmentDefinition BlueBaseBelt3 = new EquipmentDefinition("BlueBaseBelt3", "Blue Base Belt 3", 2);
+        public static readonly EquipmentDefinition BlueBaseRoller1 = new EquipmentDefinition("BlueBaseRoller1", "Blue Base Roller 1", 3);
+        public static readonly EquipmentDefinition BlueBaseRoller2 = new EquipmentDefinition("BlueBaseRoller2", "Blue Base Roller 2", 4);
+        public static readonly EquipmentDefinition BlueBaseRoller3 = new EquipmentDefinition("BlueBaseRoller3", "Blue Base Roller 3", 5);
+        public static readonly EquipmentDefinition BlueBaseRoller4 = new EquipmentDefinition("BlueBaseRoller4", "Blue Base Roller 4", 6);
+        public static readonly EquipmentDefinition BlueBaseConvRollerSensor = new EquipmentDefinition("BlueBaseConvRollerSensor", "Blue Base Conv Roller Sensor", -1, 0);
+        public static readonly EquipmentDefinition BlueBaseStopRollerSensor = new EquipmentDefinition("BlueBaseStopRollerSensor", "Blue Base Stop Roller Sensor", -1, 1);
+        public static readonly EquipmentDefinition BlueBasePositionerSensor = new EquipmentDefinition("BlueBasePositionerSensor", "Blue Base Positioner Sensor", -1, 2);
+        public static readonly EquipmentDefinition BlueBaseCamera = new EquipmentDefinition("BlueBaseCamera", "Blue Base Camera", -1, 3);
+        public static readonly EquipmentDefinition ReadSensorSorter2 = new EquipmentDefinition("ReadSensorSorter2", "Read Sensor Sorter 2", -1, 4);
+        public static readonly EquipmentDefinition BlueBaseGrabSensor = new EquipmentDefinition("BlueBaseGrabSensor", "Blue Base Grab Sensor", -1, 5);
+        public static readonly EquipmentDefinition StackerCraneBlueBaseLoaderSensor = new EquipmentDefinition("StackerCraneBlueBaseLoaderSensor", "Stacker Crane Blue Base Loader Sensor", -1, 6);
+        public static readonly EquipmentDefinition StopEntranceBeltSensor = new EquipmentDefinition("StopEntranceBeltSensor", "Stop Entrance Belt Sensor", -1, 7);
+        public static readonly EquipmentDefinition MachiningEntranceBelt = new EquipmentDefinition("MachiningEntranceBelt", "Entrance belt", 0);
+        public static readonly EquipmentDefinition MachiningProductType = new EquipmentDefinition("MachiningProductType", "Machining Type (ON=Lid, OFF=Base)", 1);
+        public static readonly EquipmentDefinition MachiningStart = new EquipmentDefinition("MachiningStart", "Machining Center Start", 2, -1, true);
+        public static readonly EquipmentDefinition MachiningStop = new EquipmentDefinition("MachiningStop", "Machining Center Stop", 3, -1, true);
+        public static readonly EquipmentDefinition MachiningReset = new EquipmentDefinition("MachiningReset", "Machining Center Reset", 4, -1, true);
+        public static readonly EquipmentDefinition ExitBeltSorter1 = new EquipmentDefinition("ExitBeltSorter1", "Exit Belt Sorter 1", 5);
+        public static readonly EquipmentDefinition MachiningEntranceSensor = new EquipmentDefinition("MachiningEntranceSensor", "Stop Entrance Belt Sensor", -1, 0);
+        public static readonly EquipmentDefinition MachiningBusy = new EquipmentDefinition("MachiningBusy", "Machining Center Is Busy", -1, 1);
+        public static readonly EquipmentDefinition MachiningError = new EquipmentDefinition("MachiningError", "Machining Center Has Error", -1, 2);
+        public static readonly EquipmentDefinition MachiningOpened = new EquipmentDefinition("MachiningOpened", "Machining Center Opened", -1, 3);
+        public static readonly EquipmentDefinition MachiningOutputSensor = new EquipmentDefinition("MachiningOutputSensor", "Write Sensor", -1, 4);
 
         public const int AtExitSensorInput = 0;
         public const int VisionRegister = 0;
@@ -41,6 +66,8 @@ namespace MesProj.Infrastructure
                 Key = definition.Key,
                 Name = definition.Name,
                 OutputAddress = definition.OutputAddress,
+                InputAddress = definition.FeedbackInputAddress,
+                IsPulseOutput = definition.IsPulseOutput,
                 State = state,
                 CommandState = false,
                 FeedbackState = false,
@@ -55,13 +82,15 @@ namespace MesProj.Infrastructure
         public string Name { get; private set; }
         public int OutputAddress { get; private set; }
         public int FeedbackInputAddress { get; private set; }
+        public bool IsPulseOutput { get; private set; }
 
-        public EquipmentDefinition(string key, string name, int outputAddress, int feedbackInputAddress = -1)
+        public EquipmentDefinition(string key, string name, int outputAddress, int feedbackInputAddress = -1, bool isPulseOutput = false)
         {
             Key = key;
             Name = name;
             OutputAddress = outputAddress;
             FeedbackInputAddress = feedbackInputAddress;
+            IsPulseOutput = isPulseOutput;
         }
     }
 }

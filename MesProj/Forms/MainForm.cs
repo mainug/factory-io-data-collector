@@ -43,6 +43,7 @@ namespace MesProj.Forms
 
             _factoryIoService.StatusChanged += FactoryIoServiceStatusChanged;
             _factoryIoService.CommunicationError += FactoryIoServiceCommunicationError;
+            _factoryIoService.ProcessEventOccurred += FactoryIoServiceProcessEventOccurred;
             _stateService.TargetQuantityReached += StateServiceTargetQuantityReached;
 
             InitializeLayout();
@@ -59,6 +60,7 @@ namespace MesProj.Forms
                 _clockTimer.Stop();
                 _factoryIoService.StatusChanged -= FactoryIoServiceStatusChanged;
                 _factoryIoService.CommunicationError -= FactoryIoServiceCommunicationError;
+                _factoryIoService.ProcessEventOccurred -= FactoryIoServiceProcessEventOccurred;
                 _stateService.TargetQuantityReached -= StateServiceTargetQuantityReached;
                 _factoryIoService.Dispose();
                 _telemetryService.Dispose();
@@ -210,6 +212,12 @@ namespace MesProj.Forms
             _alarmRepository.Add(alarm);
             _stateService.AddAlarm(alarm);
             SetStatus(message);
+        }
+
+        private void FactoryIoServiceProcessEventOccurred(object sender, ProcessEvent processEvent)
+        {
+            _telemetryService.RecordProcessEvent(processEvent);
+            SetStatus(string.Format("공정 이벤트: [{0}] {1}", processEvent.Stage, processEvent.SensorName));
         }
 
         private async void StateServiceTargetQuantityReached(object sender, EventArgs e)

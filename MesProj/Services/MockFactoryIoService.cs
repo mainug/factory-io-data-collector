@@ -22,6 +22,7 @@ namespace MesProj.Services
 
         public event EventHandler<FactoryStatus> StatusChanged;
         public event EventHandler<string> CommunicationError;
+        public event EventHandler<ProcessEvent> ProcessEventOccurred;
 
         public FactoryConnectionState ConnectionState
         {
@@ -177,6 +178,11 @@ namespace MesProj.Services
 
                 return Task.FromResult(0);
             }
+        }
+
+        public Task<int> ReadInputRegisterAsync(int address, CancellationToken cancellationToken)
+        {
+            return ReadHoldingRegisterAsync(address, cancellationToken);
         }
 
         public Task StartAsync(CancellationToken cancellationToken)
@@ -433,6 +439,8 @@ namespace MesProj.Services
                 CommandState = source.CommandState,
                 FeedbackState = source.FeedbackState,
                 OutputAddress = source.OutputAddress,
+                InputAddress = source.InputAddress,
+                IsPulseOutput = source.IsPulseOutput,
                 LastChangedAt = source.LastChangedAt
             };
         }

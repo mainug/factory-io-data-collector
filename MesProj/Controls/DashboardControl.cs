@@ -126,7 +126,7 @@ namespace MesProj.Controls
             _progressBar.Value = Math.Max(0, Math.Min(100, summary.AchievementRate));
             _progressLabel.Text = string.Format("{0} / {1} EA    달성률 {2}%", summary.CurrentQuantity, summary.TargetQuantity, summary.AchievementRate);
 
-            RenderEquipment(snapshot.EquipmentStatuses);
+            RenderEquipment(snapshot.EquipmentStatuses.Where(x => x.OutputAddress >= 0).ToList());
             _alarmGrid.DataSource = snapshot.RecentAlarms.Select(x => new AlarmGridRow(x)).ToList();
         }
 
