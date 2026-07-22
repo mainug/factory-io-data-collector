@@ -11,6 +11,7 @@ namespace MesProj.Services
     public sealed class ModbusFactoryIoService : IFactoryIoService
     {
         private const int EntranceBeltStopDelayMilliseconds = 1500;
+        private const int ResetRecoveryStabilizationMilliseconds = 5000;
         private readonly ModbusTcpClient _client = new ModbusTcpClient();
         private readonly object _syncRoot = new object();
         private readonly Dictionary<string, EquipmentStatus> _statuses = new Dictionary<string, EquipmentStatus>();
@@ -26,10 +27,16 @@ namespace MesProj.Services
         private Task _pollingTask;
         private int _pollingIntervalMilliseconds = 1000;
         private int _machiningProgress;
-        private bool _restartEntranceBeltWhenBusy;
+        private bool _restartEntranceBeltAfterCycle;
+        private bool _machiningDoorClosedAfterStart;
+        private DateTime? _openedWhileBusyAt;
+        private bool _busyTimeoutRaised;
+        private bool _resetRecoveryPending;
+        private bool _resetRecoveryWriteSeen;
         public event EventHandler<FactoryStatus> StatusChanged;
         public event EventHandler<string> CommunicationError;
         public event EventHandler<ProcessEvent> ProcessEventOccurred;
+        public event EventHandler<AlarmRecord> AlarmOccurred;
 
         public FactoryConnectionState ConnectionState { get; private set; }
         public bool IsEmergencyStopped { get; private set; }
@@ -53,7 +60,12 @@ namespace MesProj.Services
                 lock (_syncRoot)
                 {
                     _initializedSensors.Clear();
-                    _restartEntranceBeltWhenBusy = false;
+                    _restartEntranceBeltAfterCycle = false;
+                    _machiningDoorClosedAfterStart = false;
+                    _openedWhileBusyAt = null;
+                    _busyTimeoutRaised = false;
+                    _resetRecoveryPending = false;
+                    _resetRecoveryWriteSeen = false;
                     foreach (var status in _statuses.Values)
                     {
                         status.State = EquipmentState.Stopped;
@@ -85,7 +97,12 @@ namespace MesProj.Services
                     status.FeedbackState = false;
                     status.LastChangedAt = DateTime.Now;
                 }
-                _restartEntranceBeltWhenBusy = false;
+                _restartEntranceBeltAfterCycle = false;
+                _machiningDoorClosedAfterStart = false;
+                _openedWhileBusyAt = null;
+                _busyTimeoutRaised = false;
+                _resetRecoveryPending = false;
+                _resetRecoveryWriteSeen = false;
             }
             RaiseStatus();
             return Task.FromResult(0);
@@ -119,6 +136,22 @@ namespace MesProj.Services
                         throw new InvalidOperationException("입구 센서에 소재가 감지되어 Entrance belt를 가동할 수 없습니다.");
                 }
             }
+            if (address == FactoryIoMap.MachiningReset.OutputAddress && value)
+            {
+                await _client.WriteSingleCoilAsync(
+                    (ushort)FactoryIoMap.MachiningEntranceBelt.OutputAddress,
+                    false,
+                    cancellationToken).ConfigureAwait(false);
+                lock (_syncRoot)
+                {
+                    var belt = _statuses[FactoryIoMap.MachiningEntranceBelt.Key];
+                    belt.CommandState = false;
+                    belt.State = EquipmentState.Stopped;
+                    belt.LastChangedAt = DateTime.Now;
+                }
+                AppLogger.Info("AUTO WRITE Coil 0 OFF (Reset recovery interlock)");
+            }
+
             await _client.WriteSingleCoilAsync((ushort)address, value, cancellationToken).ConfigureAwait(false);
             lock (_syncRoot)
             {
@@ -127,10 +160,22 @@ namespace MesProj.Services
                 status.State = value ? EquipmentState.Running : EquipmentState.Stopped;
                 status.LastChangedAt = DateTime.Now;
                 if (address == FactoryIoMap.MachiningStart.OutputAddress && value)
-                    _restartEntranceBeltWhenBusy = true;
+                {
+                    _restartEntranceBeltAfterCycle = true;
+                    _machiningDoorClosedAfterStart = false;
+                }
                 if ((address == FactoryIoMap.MachiningStop.OutputAddress || address == FactoryIoMap.MachiningReset.OutputAddress) && value)
-                    _restartEntranceBeltWhenBusy = false;
+                {
+                    _restartEntranceBeltAfterCycle = false;
+                    _machiningDoorClosedAfterStart = false;
+                }
+                if (address == FactoryIoMap.MachiningReset.OutputAddress && value)
+                {
+                    _resetRecoveryPending = true;
+                    _resetRecoveryWriteSeen = false;
+                }
             }
+            AppLogger.Info(string.Format("MODBUS WRITE Coil {0} {1} ({2})", address, value ? "ON" : "OFF", definition.Key));
             RaiseStatus();
         }
 
@@ -210,42 +255,98 @@ namespace MesProj.Services
                     {
                         var sensor = await _client.ReadDiscreteInputAsync((ushort)definition.FeedbackInputAddress, cancellationToken).ConfigureAwait(false);
                         var risingEdge = false;
+                        var fallingEdge = false;
                         lock (_syncRoot)
                         {
                             var status = _statuses[definition.Key];
                             risingEdge = _initializedSensors.Contains(definition.Key) && !status.FeedbackState && sensor;
+                            fallingEdge = _initializedSensors.Contains(definition.Key) && status.FeedbackState && !sensor;
                             if (status.FeedbackState != sensor) status.LastChangedAt = DateTime.Now;
                             status.FeedbackState = sensor;
                             status.State = sensor ? EquipmentState.Running : EquipmentState.Stopped;
                             _initializedSensors.Add(definition.Key);
                         }
                         if (risingEdge) RaiseProcessEvent(definition);
+                        if (risingEdge || fallingEdge)
+                            AppLogger.Info(string.Format("MODBUS INPUT Input {0} {1} ({2})",
+                                definition.FeedbackInputAddress, sensor ? "ON" : "OFF", definition.Key));
 
-                        if (definition.Key == FactoryIoMap.MachiningBusy.Key && sensor)
+                        if (definition.Key == FactoryIoMap.MachiningOpened.Key)
+                        {
+                            lock (_syncRoot)
+                            {
+                                if (_restartEntranceBeltAfterCycle && !sensor)
+                                    _machiningDoorClosedAfterStart = true;
+                                if (risingEdge && _statuses[FactoryIoMap.MachiningBusy.Key].FeedbackState)
+                                    _openedWhileBusyAt = DateTime.Now;
+                            }
+                        }
+
+                        if (definition.Key == FactoryIoMap.MachiningOutputSensor.Key && risingEdge)
+                        {
+                            var recoveryOutput = false;
+                            lock (_syncRoot)
+                            {
+                                recoveryOutput = _resetRecoveryPending;
+                                if (recoveryOutput) _resetRecoveryWriteSeen = true;
+                            }
+                            if (recoveryOutput)
+                                RaiseProcessEvent(definition, "Aborted");
+                        }
+
+                        if (definition.Key == FactoryIoMap.MachiningBusy.Key && fallingEdge)
                         {
                             var entranceOccupied = false;
                             var beltIsRunning = false;
                             var restartRequested = false;
+                            var doorCycleSeen = false;
+                            var recoveryCompleted = false;
+                            var recoveryWriteSeen = false;
                             lock (_syncRoot)
                             {
                                 entranceOccupied = _statuses[FactoryIoMap.MachiningEntranceSensor.Key].FeedbackState;
                                 beltIsRunning = _statuses[FactoryIoMap.MachiningEntranceBelt.Key].CommandState;
-                                restartRequested = _restartEntranceBeltWhenBusy;
+                                restartRequested = _restartEntranceBeltAfterCycle;
+                                doorCycleSeen = _machiningDoorClosedAfterStart;
+                                recoveryCompleted = _resetRecoveryPending;
+                                recoveryWriteSeen = _resetRecoveryWriteSeen;
+                                _openedWhileBusyAt = null;
+                                _busyTimeoutRaised = false;
                             }
 
-                            if (restartRequested && !entranceOccupied && !beltIsRunning)
+                            if (recoveryCompleted)
                             {
-                                await _client.WriteSingleCoilAsync(
-                                    (ushort)FactoryIoMap.MachiningEntranceBelt.OutputAddress,
-                                    true,
-                                    cancellationToken).ConfigureAwait(false);
+                                AppLogger.Info("MACHINING RECOVERY Busy OFF, stabilization started, WriteSensor=" + recoveryWriteSeen);
+                                await Task.Delay(ResetRecoveryStabilizationMilliseconds, cancellationToken).ConfigureAwait(false);
                                 lock (_syncRoot)
                                 {
-                                    var belt = _statuses[FactoryIoMap.MachiningEntranceBelt.Key];
-                                    belt.CommandState = true;
-                                    belt.State = EquipmentState.Running;
-                                    belt.LastChangedAt = DateTime.Now;
-                                    _restartEntranceBeltWhenBusy = false;
+                                    _resetRecoveryPending = false;
+                                    _resetRecoveryWriteSeen = false;
+                                }
+                                AppLogger.Info("MACHINING RECOVERY COMPLETED after 5 second stabilization");
+                            }
+
+                            if (restartRequested && doorCycleSeen)
+                            {
+                                if (!entranceOccupied && !beltIsRunning)
+                                {
+                                    await _client.WriteSingleCoilAsync(
+                                        (ushort)FactoryIoMap.MachiningEntranceBelt.OutputAddress,
+                                        true,
+                                        cancellationToken).ConfigureAwait(false);
+                                    AppLogger.Info("AUTO WRITE Coil 0 ON (Busy OFF after machining cycle)");
+                                }
+                                lock (_syncRoot)
+                                {
+                                    if (!entranceOccupied && !beltIsRunning)
+                                    {
+                                        var belt = _statuses[FactoryIoMap.MachiningEntranceBelt.Key];
+                                        belt.CommandState = true;
+                                        belt.State = EquipmentState.Running;
+                                        belt.LastChangedAt = DateTime.Now;
+                                    }
+                                    _restartEntranceBeltAfterCycle = false;
+                                    _machiningDoorClosedAfterStart = false;
                                 }
                             }
                         }
@@ -265,6 +366,7 @@ namespace MesProj.Services
                                     (ushort)FactoryIoMap.MachiningEntranceBelt.OutputAddress,
                                     false,
                                     cancellationToken).ConfigureAwait(false);
+                                AppLogger.Info("AUTO WRITE Coil 0 OFF (Entrance sensor delay elapsed)");
                                 lock (_syncRoot)
                                 {
                                     var belt = _statuses[FactoryIoMap.MachiningEntranceBelt.Key];
@@ -275,6 +377,7 @@ namespace MesProj.Services
                             }
                         }
                     }
+                    CheckMachiningBusyTimeout();
                     _machiningProgress = await _client.ReadInputRegisterAsync(0, cancellationToken).ConfigureAwait(false);
                     RaiseStatus();
                     await Task.Delay(_pollingIntervalMilliseconds, cancellationToken).ConfigureAwait(false);
@@ -346,6 +449,11 @@ namespace MesProj.Services
 
         private void RaiseProcessEvent(EquipmentDefinition definition)
         {
+            RaiseProcessEvent(definition, "RisingEdge");
+        }
+
+        private void RaiseProcessEvent(EquipmentDefinition definition, string eventType)
+        {
             var handler = ProcessEventOccurred;
             if (handler == null) return;
             handler(this, new ProcessEvent
@@ -355,8 +463,43 @@ namespace MesProj.Services
                 SensorKey = definition.Key,
                 SensorName = definition.Name,
                 InputAddress = definition.FeedbackInputAddress,
-                EventType = "RisingEdge"
+                EventType = eventType
             });
+        }
+
+        private void CheckMachiningBusyTimeout()
+        {
+            AlarmRecord alarm = null;
+            lock (_syncRoot)
+            {
+                var busy = _statuses[FactoryIoMap.MachiningBusy.Key].FeedbackState;
+                var opened = _statuses[FactoryIoMap.MachiningOpened.Key].FeedbackState;
+                if (!busy)
+                {
+                    _openedWhileBusyAt = null;
+                    _busyTimeoutRaised = false;
+                    return;
+                }
+
+                if (!opened || !_openedWhileBusyAt.HasValue || _busyTimeoutRaised ||
+                    DateTime.Now - _openedWhileBusyAt.Value < TimeSpan.FromSeconds(30))
+                    return;
+
+                _busyTimeoutRaised = true;
+                alarm = new AlarmRecord
+                {
+                    OccurredAt = DateTime.Now,
+                    EquipmentName = "Machining Center",
+                    AlarmCode = "MACHINING_BUSY_TIMEOUT",
+                    Message = "가공기 개방 후 30초 동안 Busy가 해제되지 않았습니다. 자동 가공을 중지하고 Reset 복구가 필요합니다.",
+                    Severity = "Warning",
+                    IsAcknowledged = false
+                };
+            }
+
+            AppLogger.Info("ALARM MACHINING_BUSY_TIMEOUT");
+            var handler = AlarmOccurred;
+            if (handler != null) handler(this, alarm);
         }
 
         private static string GetStage(string key)

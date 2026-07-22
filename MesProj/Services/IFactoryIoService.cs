@@ -10,6 +10,7 @@ namespace MesProj.Services
         event EventHandler<FactoryStatus> StatusChanged;
         event EventHandler<string> CommunicationError;
         event EventHandler<ProcessEvent> ProcessEventOccurred;
+        event EventHandler<AlarmRecord> AlarmOccurred;
 
         FactoryConnectionState ConnectionState { get; }
         bool IsEmergencyStopped { get; }
