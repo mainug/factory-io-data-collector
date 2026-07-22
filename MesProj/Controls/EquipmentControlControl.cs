@@ -59,9 +59,8 @@ namespace MesProj.Controls
 
         private void InitializeLayout()
         {
-            var root = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3, ColumnCount = 1 };
+            var root = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 108));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 104));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
             var connectionGroup = new GroupBox { Text = "통신 상태", Dock = DockStyle.Fill, Font = new Font("맑은 고딕", 10, FontStyle.Bold) };
@@ -112,9 +111,30 @@ namespace MesProj.Controls
             equipmentLayout.Controls.Add(sensorGroup, 0, 1);
             equipmentGroup.Controls.Add(equipmentLayout);
 
+            var machiningLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
+            machiningLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 104));
+            machiningLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            machiningLayout.Controls.Add(operationGroup, 0, 0);
+            machiningLayout.Controls.Add(equipmentGroup, 0, 1);
+
+            var machiningTab = new TabPage("가공 공정") { Padding = new Padding(6) };
+            machiningTab.Controls.Add(machiningLayout);
+
+            var sortingTab = new TabPage("분류·적재 공정") { Padding = new Padding(18) };
+            var sortingPlaceholder = new Label
+            {
+                AutoSize = true,
+                Font = new Font("맑은 고딕", 11, FontStyle.Bold),
+                Text = "분류·적재 공정 제어 화면\r\n\r\nWrite Sensor 이후 출구 이송, 카메라 판별, 색상·형태 분류 및 적재 설비를 이 탭에 추가합니다."
+            };
+            sortingTab.Controls.Add(sortingPlaceholder);
+
+            var processTabs = new TabControl { Dock = DockStyle.Fill };
+            processTabs.TabPages.Add(machiningTab);
+            processTabs.TabPages.Add(sortingTab);
+
             root.Controls.Add(connectionGroup, 0, 0);
-            root.Controls.Add(operationGroup, 0, 1);
-            root.Controls.Add(equipmentGroup, 0, 2);
+            root.Controls.Add(processTabs, 0, 1);
             Controls.Add(root);
         }
 
