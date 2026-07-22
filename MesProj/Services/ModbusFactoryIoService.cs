@@ -10,6 +10,7 @@ namespace MesProj.Services
 {
     public sealed class ModbusFactoryIoService : IFactoryIoService
     {
+        private const int EntranceBeltStopDelayMilliseconds = 700;
         private readonly ModbusTcpClient _client = new ModbusTcpClient();
         private readonly object _syncRoot = new object();
         private readonly Dictionary<string, EquipmentStatus> _statuses = new Dictionary<string, EquipmentStatus>();
@@ -106,6 +107,14 @@ namespace MesProj.Services
             var definition = _definitions.FirstOrDefault(x => x.OutputAddress == address);
             if (definition == null || address < 0)
                 throw new InvalidOperationException("검증되지 않은 Coil 주소는 제어할 수 없습니다: " + address);
+            if (address == FactoryIoMap.MachiningEntranceBelt.OutputAddress && value)
+            {
+                lock (_syncRoot)
+                {
+                    if (_statuses[FactoryIoMap.MachiningEntranceSensor.Key].FeedbackState)
+                        throw new InvalidOperationException("입구 센서에 소재가 감지되어 Entrance belt를 가동할 수 없습니다.");
+                }
+            }
             await _client.WriteSingleCoilAsync((ushort)address, value, cancellationToken).ConfigureAwait(false);
             lock (_syncRoot)
             {
@@ -203,6 +212,57 @@ namespace MesProj.Services
                             _initializedSensors.Add(definition.Key);
                         }
                         if (risingEdge) RaiseProcessEvent(definition);
+
+                        if (definition.Key == FactoryIoMap.MachiningBusy.Key && risingEdge)
+                        {
+                            var entranceOccupied = false;
+                            var beltIsRunning = false;
+                            lock (_syncRoot)
+                            {
+                                entranceOccupied = _statuses[FactoryIoMap.MachiningEntranceSensor.Key].FeedbackState;
+                                beltIsRunning = _statuses[FactoryIoMap.MachiningEntranceBelt.Key].CommandState;
+                            }
+
+                            if (!entranceOccupied && !beltIsRunning)
+                            {
+                                await _client.WriteSingleCoilAsync(
+                                    (ushort)FactoryIoMap.MachiningEntranceBelt.OutputAddress,
+                                    true,
+                                    cancellationToken).ConfigureAwait(false);
+                                lock (_syncRoot)
+                                {
+                                    var belt = _statuses[FactoryIoMap.MachiningEntranceBelt.Key];
+                                    belt.CommandState = true;
+                                    belt.State = EquipmentState.Running;
+                                    belt.LastChangedAt = DateTime.Now;
+                                }
+                            }
+                        }
+
+                        if (definition.Key == FactoryIoMap.MachiningEntranceSensor.Key && sensor)
+                        {
+                            var beltIsRunning = false;
+                            lock (_syncRoot)
+                            {
+                                beltIsRunning = _statuses[FactoryIoMap.MachiningEntranceBelt.Key].CommandState;
+                            }
+
+                            if (beltIsRunning)
+                            {
+                                await Task.Delay(EntranceBeltStopDelayMilliseconds, cancellationToken).ConfigureAwait(false);
+                                await _client.WriteSingleCoilAsync(
+                                    (ushort)FactoryIoMap.MachiningEntranceBelt.OutputAddress,
+                                    false,
+                                    cancellationToken).ConfigureAwait(false);
+                                lock (_syncRoot)
+                                {
+                                    var belt = _statuses[FactoryIoMap.MachiningEntranceBelt.Key];
+                                    belt.CommandState = false;
+                                    belt.State = EquipmentState.Stopped;
+                                    belt.LastChangedAt = DateTime.Now;
+                                }
+                            }
+                        }
                     }
                     _machiningProgress = await _client.ReadInputRegisterAsync(0, cancellationToken).ConfigureAwait(false);
                     RaiseStatus();

@@ -25,6 +25,7 @@ namespace MesProj.Controls
         private readonly Label _machiningProgressLabel = new Label();
         private readonly ProgressBar _machiningProgressBar = new ProgressBar();
         private readonly Button _machiningStartButton = new Button();
+        private bool _materialReady;
 
         public EquipmentControlControl(IFactoryIoService factoryIoService, ISettingsService settingsService, IApplicationStateService stateService, Func<CommunicationOptions> getOptions, Action<string> setStatus)
         {
@@ -165,7 +166,6 @@ namespace MesProj.Controls
         private async void MachiningStartButtonClick(object sender, EventArgs e)
         {
             var snapshot = _stateService.GetSnapshot();
-            var entrance = snapshot.EquipmentStatuses.FirstOrDefault(x => x.Key == "MachiningEntranceSensor");
             var busy = snapshot.EquipmentStatuses.FirstOrDefault(x => x.Key == "MachiningBusy");
             var error = snapshot.EquipmentStatuses.FirstOrDefault(x => x.Key == "MachiningError");
 
@@ -175,9 +175,9 @@ namespace MesProj.Controls
                 return;
             }
 
-            if (entrance == null || !entrance.FeedbackState)
+            if (!_materialReady)
             {
-                _setStatus("가공 입구 센서에 원소재가 감지되지 않았습니다.");
+                _setStatus("가공 입구를 통과한 원소재가 없습니다.");
                 return;
             }
 
@@ -199,6 +199,7 @@ namespace MesProj.Controls
                     await _factoryIoService.WriteCoilAsync(2, false, CancellationToken.None);
                 }
             }, "가공 시작 신호 전송 완료");
+            _materialReady = false;
         }
 
         private async Task RunCommandAsync(Func<CancellationToken, Task> command, string successMessage)
@@ -240,10 +241,18 @@ namespace MesProj.Controls
             _machiningProgressLabel.Text = "Machining Center 진행률: " + progress + "%";
             _machiningProgressBar.Value = progress;
             var entranceReady = snapshot.EquipmentStatuses.Any(x => x.Key == "MachiningEntranceSensor" && x.FeedbackState);
+            if (snapshot.Summary.ConnectionState != FactoryConnectionState.Connected)
+            {
+                _materialReady = false;
+            }
+            if (entranceReady)
+            {
+                _materialReady = true;
+            }
             var machiningBusy = snapshot.EquipmentStatuses.Any(x => x.Key == "MachiningBusy" && x.FeedbackState);
             var machiningError = snapshot.EquipmentStatuses.Any(x => x.Key == "MachiningError" && x.FeedbackState);
             _machiningStartButton.Enabled = snapshot.Summary.ConnectionState == FactoryConnectionState.Connected
-                && entranceReady && !machiningBusy && !machiningError;
+                && _materialReady && !machiningBusy && !machiningError;
             var equipmentRows = snapshot.EquipmentStatuses
                 .Where(x => x.OutputAddress >= 0 && !x.IsPulseOutput)
                 .Select(x => new EquipmentRow(x))
