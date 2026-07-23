@@ -89,6 +89,7 @@
     <Compile Include="Repositories\IWorkOrderRepository.cs" />
     <Compile Include="Repositories\MockRepositories.cs" />
     <Compile Include="Services\ApplicationStateService.cs" />
+    <Compile Include="Services\BlueLidSorterController.cs" />
     <Compile Include="Services\IApplicationStateService.cs" />
     <Compile Include="Services\IFactoryIoService.cs" />
     <Compile Include="Services\ISettingsService.cs" />
