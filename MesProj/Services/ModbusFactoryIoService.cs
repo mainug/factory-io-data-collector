@@ -17,7 +17,7 @@ namespace MesProj.Services
         private const int SorterArrivalTimeoutMilliseconds = 10000;
         private const int SorterExitTimeoutMilliseconds = 5000;
         private const int SorterDischargeOverrunMilliseconds = 1500;
-        private const int BlueLidBeltOverrunMilliseconds = 750;
+        private const int BlueLidBeltOverrunMilliseconds = 8500;
         private readonly ModbusTcpClient _client = new ModbusTcpClient();
         private readonly object _syncRoot = new object();
         private readonly Dictionary<string, EquipmentStatus> _statuses = new Dictionary<string, EquipmentStatus>();
