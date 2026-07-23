@@ -2,7 +2,7 @@
 
 - 최종 갱신일: 2026-07-23
 - 문서 범위: Factory I/O 매핑·센서 시험, C# 자동 분류 구현, UI 분리, 수동 출력 및 안전 인터록 검증 현황
-- 코드 구현 상태: 1차 구현 및 무부하 수동 검증 완료, 자동 제품 이송 시험 대기
+- 코드 구현 상태: 자동 제품 1개 이송 및 Blue Lid Belt 1 안착 검증 완료
 
 ## 1. 목표
 
@@ -149,17 +149,19 @@ Sorter 1은 각도 숫자 `90`을 입력하는 장치가 아니다. Boolean 출�
 강제 출력 및 센서 순서 시험 결과를 바탕으로 다음 상태 흐름을 구현했다. 자동 분류는 Modbus 연결만으로 시작되지 않으며, `분류·적재 공정` 탭에서 작업자가 `자동 분류 시작`을 눌러야 활성화된다.
 
 ```text
-1. Blue Product Lid 판정
-2. Coil 7 ON       // Blue Lid 방향 선택
-3. Coil 9 ON       // Blue Lid Belt 1 수신 준비
-4. Read Sensor Sorter 1 ON 확인
-5. Coil 6 ON       // Sorter 동력 공급 및 오른쪽 분기
-6. Read Sensor Sorter 1 OFF 확인
-7. Coil 6 OFF
-8. Coil 7 OFF
-9. 제품 안착을 위해 Coil 9를 750ms 추가 유지
-10. Coil 9 OFF
-11. 제품 추적 상태 초기화
+1. 자동 분류 시작 시 Coil 5 ON
+2. Blue Product Lid 판정
+3. Coil 7 ON       // Blue Lid 방향 선택
+4. Coil 9 ON       // Blue Lid Belt 1 수신 준비
+5. Read Sensor Sorter 1 ON 확인
+6. Coil 6 ON       // Sorter 동력 공급 및 오른쪽 분기
+7. Read Sensor Sorter 1 OFF 확인
+8. Coil 6·7·9를 1.5초 추가 유지
+9. Coil 6·7 OFF
+10. 제품 안착을 위해 Coil 9를 750ms 추가 유지
+11. Coil 9 OFF
+12. 제품 추적 상태 초기화
+13. 자동 분류 중지 시 Coil 5~9 OFF
 ```
 
 현재 구현값:
@@ -168,9 +170,35 @@ Sorter 1은 각도 숫자 `90`을 입력하는 장치가 아니다. Boolean 출�
 - Blue Lid 판별 대기 제한: `3초`
 - Sorter 도착 대기 제한: `10초`
 - Sorter 이탈 대기 제한: `5초`
+- Input 5 OFF 후 Coil 6·7·9 배출 유지: 설정값 `1.5초`
 - Input 5 OFF 후 Coil 9 추가 유지: `750ms`
 
 시간초과 시 관련 출력을 안전 OFF하고 알람을 발생시킨다. 위 시간값은 자동 제품 이송 시험 후 필요하면 조정한다.
+
+### 자동 제품 이송 시험 결과
+
+첫 번째 자동 시험에서는 Input 5가 OFF되자마자 Coil 6과 Coil 7을 OFF하여 제품이 Sorter 입구 부근에서 멈췄다. 로그상 Coil 6의 구동시간은 약 `0.625초`에 불과했다. Input 5 OFF는 제품의 Sorter 통과 완료가 아니라 제품 뒤쪽이 입구 센서를 벗어난 시점으로 판정해야 한다.
+
+이를 반영하여 `ClearingSorter` 상태를 추가하고 Input 5 OFF 이후 Coil 6·7·9를 설정상 `1.5초` 추가 유지하도록 수정했다. 수정 후 두 번째 시험 결과는 다음과 같다.
+
+```text
+11:39:48.599  Blue Lid Camera ON
+11:39:48.606  Coil 7 ON
+11:39:48.609  Coil 9 ON
+11:39:52.876  Read Sensor Sorter 1 ON
+11:39:52.879  Coil 6 ON
+11:39:53.513  Read Sensor Sorter 1 OFF
+11:39:55.656  Coil 6 OFF
+11:39:55.658  Coil 7 OFF
+11:39:56.428  Coil 9 OFF
+```
+
+- 제품이 Sorter 1에서 Blue Lid 방향으로 정상 분기했다.
+- 제품이 `Blue Lid Belt 1`에 정상 진입·안착했다.
+- 폴링 및 Modbus 처리시간을 포함한 실제 Coil 6·7 추가 유지시간은 약 `2.14초`였다.
+- Coil 6·7 OFF 후 Coil 9 실제 후행 유지시간은 약 `0.77초`였다.
+- 시험 종료 시 자동 분류 중지로 Coil 5~9가 모두 OFF됐다.
+- 상류 자동 가공이 계속 실행되어 후속 제품이 유입됐으므로, 단일 제품 시험 시 자동 가공과 Entrance Belt를 별도로 정지해야 한다.
 
 ## 8. 완료된 작업
 
@@ -199,28 +227,33 @@ Sorter 1은 각도 숫자 `90`을 입력하는 장치가 아니다. Boolean 출�
 - [x] 폴링 주기를 `50~100ms` 범위로 제한
 - [x] 센서 상승·하강 에지 기반 Blue Lid 상태 머신 구현
 - [x] Coil 7과 Coil 8 동시 ON 방지 인터록 구현
-- [x] 연결 및 연결 해제 시 Coil 6~9 안전 OFF 구현
+- [x] 연결 및 연결 해제 시 Coil 5~9 안전 OFF 구현
 - [x] C#에서 Coil 9 단독 ON/OFF 및 Blue Lid Belt 1 작동 확인
 - [x] C#에서 Coil 7 단독 방향 전환 확인
 - [x] C#에서 Coil 6 단독 전진 구동 및 OFF 정지 확인
 - [x] C#에서 Coil 6·7·9 무부하 연계 구동 확인
 - [x] Coil 7 ON 상태에서 Coil 8 ON 차단 확인
 - [x] Coil 8 ON 상태에서 Coil 7 ON 차단 확인
-- [x] 통신 종료 시 Coil 6~9 안전 해제 확인
+- [x] 통신 종료 시 Coil 5~9 안전 해제 확인
 - [x] 설비 제어 화면의 `가공 공정`과 `분류·적재 공정` I/O 표시 분리
 - [x] `분류·적재 공정` 탭에 자동 분류 시작/중지 기능 구현
 - [x] 연결 직후 자동 분류 기본 중지 처리
+- [x] 자동 분류 시작 시 Coil 5 자동 ON 및 중지 시 Coil 5~9 안전 OFF 구현
+- [x] 새 UI에서 연결 후 자동 분류 시작/중지 버튼 활성 상태 확인
+- [x] 자동 분류 중지 버튼으로 Coil 5~9 안전 OFF 확인
+- [x] 첫 자동 제품 시험 실패 원인 분석: Input 5 OFF 직후 조기 정지
+- [x] Input 5 OFF 이후 Coil 6·7·9 배출 유지 상태 구현
+- [x] 제품 1개 C# 자동 분류 및 Blue Lid Belt 1 정상 안착 확인
+- [x] 자동 운전에서 센서 및 Coil 출력 순서 로그 검증
 - [x] 시작 화면의 통신 모드 상태 문구를 실제 설정에 맞게 표시하도록 수정
 - [x] Release 구성 빌드 성공
 
 ## 9. 아직 완료되지 않은 작업
 
 - [ ] Mock 서비스에 동일한 태그 및 시험 시나리오 추가
-- [ ] 새 UI에서 연결 후 자동 분류 시작/중지 버튼 활성 상태 확인
-- [ ] 자동 분류 중지 버튼으로 운전 중 Coil 6~9 안전 OFF 확인
-- [ ] 제품 1개를 사용한 C# 자동 ON/OFF 및 Blue Lid 이송 시험
 - [ ] 자동 운전에서 Sorter 도착·이탈 제한시간 검증
-- [ ] Input 5 OFF 후 Coil 9 유지시간 확정
+- [ ] 반복 시험으로 Sorter 배출 유지시간과 Coil 9 유지시간 최종 확정
+- [ ] 상류 자동 가공 중지와 단일 제품 투입 절차 정리
 - [ ] Blue/Green Lid 교차 투입 검증
 - [ ] 반복 운전 및 장애 상황 검증
 
@@ -228,28 +261,19 @@ Sorter 1은 각도 숫자 `90`을 입력하는 장치가 아니다. Boolean 출�
 
 Factory I/O 측 필수 I/O 매핑, Sorter 1의 출력별 역할, Blue Lid 오른쪽 분기, Blue Lid Belt 1 인계, 세 센서의 발생 순서와 유지시간을 확인했다. C#에서는 I/O 정의, 빠른 폴링, 센서 에지 기반 상태 머신, Blue/Green 동시 출력 방지, 연결 해제 안전 정지 및 자동 분류 시작/중지 기능까지 구현했다.
 
-현재 단계는 **C# 구현 및 무부하 수동 검증 완료, 자동 분류 UI 연결 확인 및 제품 1개 자동 이송 시험 대기** 상태다. Mock 서비스는 인터페이스 호환만 반영됐으며 센서 시나리오 기반 상태 머신 검증은 아직 완료되지 않았다.
+현재 단계는 **C# 자동 분류 구현과 제품 1개 Blue Lid Belt 1 안착 검증 완료, 반복·교차 투입 및 장애 시나리오 시험 대기** 상태다. Mock 서비스는 인터페이스 호환만 반영됐으며 센서 시나리오 기반 상태 머신 검증은 아직 완료되지 않았다.
 
 ## 11. 다음 작업 순서
-
-### UI 및 안전 기능 확인
-
-1. C#을 재시작하고 Modbus TCP 모드 문구를 확인한다.
-2. Factory I/O에 연결한다.
-3. 연결 전에는 자동 분류 시작·중지 버튼이 모두 비활성인지 확인한다.
-4. 연결 후에는 시작 버튼만 활성이고 중지 버튼은 비활성인지 확인한다.
-5. 제품 없이 자동 분류 시작 후 중지하여 Coil 6~9가 모두 OFF인지 확인한다.
 
 ### Mock 검증
 
 1. Mock 서비스에 Input 4~7과 Coil 5~9 상태를 반영한다.
 2. 정상 흐름, Green Lid 취소, 센서 누락, 센서 고착 및 시간초과 시나리오를 추가한다.
-3. 각 시나리오에서 Coil 6~9의 최종 OFF를 확인한다.
+3. 각 시나리오에서 Coil 5~9의 최종 OFF를 확인한다.
 
 ### 검증
 
-1. `자동 분류 시작`을 누른 뒤 Factory I/O에서 Blue Product Lid 제품 1개를 투입한다.
-2. Write Sensor → Blue Lid Camera → Read Sensor Sorter 1 순서와 Coil 7·9 → Coil 6 → Coil 6·7 OFF → Coil 9 OFF 순서를 관찰한다.
-3. Blue Lid Belt 1 안착과 최종 Coil 6~9 OFF를 확인한다.
-4. Coil 9 후행 유지시간을 조정한다.
-5. Blue Lid 반복 운전과 Blue/Green Lid 교차 투입을 검증한다.
+1. 상류 자동 가공과 Entrance Belt를 제어하여 제품을 정확히 1개씩 공급한다.
+2. Blue Lid 반복 운전으로 Sorter 배출 유지시간과 Coil 9 후행시간의 안정성을 확인한다.
+3. 센서 누락·고착 및 도착·이탈 시간초과 시 Coil 5~9 안전 OFF와 알람을 검증한다.
+4. Blue/Green Lid 교차 투입을 검증한다.

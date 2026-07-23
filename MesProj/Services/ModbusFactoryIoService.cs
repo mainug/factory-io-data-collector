@@ -16,6 +16,7 @@ namespace MesProj.Services
         private const int BlueLidIdentificationTimeoutMilliseconds = 3000;
         private const int SorterArrivalTimeoutMilliseconds = 10000;
         private const int SorterExitTimeoutMilliseconds = 5000;
+        private const int SorterDischargeOverrunMilliseconds = 1500;
         private const int BlueLidBeltOverrunMilliseconds = 750;
         private readonly ModbusTcpClient _client = new ModbusTcpClient();
         private readonly object _syncRoot = new object();
@@ -226,14 +227,24 @@ namespace MesProj.Services
             if (ConnectionState != FactoryConnectionState.Connected)
                 throw new InvalidOperationException("Factory I/O 연결 후 자동 분류를 시작할 수 있습니다.");
 
-            lock (_syncRoot)
+            if (enabled)
             {
-                _blueLidAutoSortingEnabled = enabled;
-                if (!enabled) ResetBlueLidRouteState();
+                await SetSorterOutputAsync(FactoryIoMap.ExitBeltSorter1, true, cancellationToken).ConfigureAwait(false);
+                lock (_syncRoot)
+                {
+                    _blueLidAutoSortingEnabled = true;
+                    ResetBlueLidRouteState();
+                }
             }
-
-            if (!enabled)
+            else
+            {
+                lock (_syncRoot)
+                {
+                    _blueLidAutoSortingEnabled = false;
+                    ResetBlueLidRouteState();
+                }
                 await StopSorterOutputsAsync(cancellationToken).ConfigureAwait(false);
+            }
 
             AppLogger.Info("BLUE LID AUTO SORTING " + (enabled ? "ENABLED" : "DISABLED"));
             RaiseStatus();
@@ -553,14 +564,12 @@ namespace MesProj.Services
                 }
                 if (!finishSorter) return;
 
-                await SetSorterOutputAsync(FactoryIoMap.Sorter1ForwardAndPower, false, cancellationToken).ConfigureAwait(false);
-                await SetSorterOutputAsync(FactoryIoMap.Sorter1BlueLid, false, cancellationToken).ConfigureAwait(false);
                 lock (_syncRoot)
                 {
-                    _blueLidRouteState = BlueLidRouteState.ClearingBlueLidBelt;
-                    _blueLidRouteDeadlineUtc = DateTime.UtcNow.AddMilliseconds(BlueLidBeltOverrunMilliseconds);
+                    _blueLidRouteState = BlueLidRouteState.ClearingSorter;
+                    _blueLidRouteDeadlineUtc = DateTime.UtcNow.AddMilliseconds(SorterDischargeOverrunMilliseconds);
                 }
-                AppLogger.Info("BLUE LID ROUTE sorter cleared, Coil 9 overrun started");
+                AppLogger.Info("BLUE LID ROUTE entry sensor cleared, Coil 6, 7 and 9 discharge overrun started");
             }
         }
 
@@ -585,6 +594,19 @@ namespace MesProj.Services
             {
                 await SetSorterOutputAsync(FactoryIoMap.BlueLidBelt1, false, cancellationToken).ConfigureAwait(false);
                 AppLogger.Info("BLUE LID ROUTE completed Coil 9 OFF");
+                return;
+            }
+
+            if (expiredState == BlueLidRouteState.ClearingSorter)
+            {
+                await SetSorterOutputAsync(FactoryIoMap.Sorter1ForwardAndPower, false, cancellationToken).ConfigureAwait(false);
+                await SetSorterOutputAsync(FactoryIoMap.Sorter1BlueLid, false, cancellationToken).ConfigureAwait(false);
+                lock (_syncRoot)
+                {
+                    _blueLidRouteState = BlueLidRouteState.ClearingBlueLidBelt;
+                    _blueLidRouteDeadlineUtc = DateTime.UtcNow.AddMilliseconds(BlueLidBeltOverrunMilliseconds);
+                }
+                AppLogger.Info("BLUE LID ROUTE sorter discharge completed, Coil 9 overrun started");
                 return;
             }
 
@@ -615,6 +637,7 @@ namespace MesProj.Services
 
         private async Task StopSorterOutputsAsync(CancellationToken cancellationToken)
         {
+            await SetSorterOutputAsync(FactoryIoMap.ExitBeltSorter1, false, cancellationToken).ConfigureAwait(false);
             await SetSorterOutputAsync(FactoryIoMap.Sorter1ForwardAndPower, false, cancellationToken).ConfigureAwait(false);
             await SetSorterOutputAsync(FactoryIoMap.Sorter1BlueLid, false, cancellationToken).ConfigureAwait(false);
             await SetSorterOutputAsync(FactoryIoMap.Sorter1GreenLid, false, cancellationToken).ConfigureAwait(false);
@@ -772,6 +795,7 @@ namespace MesProj.Services
             AwaitingIdentification,
             WaitingForSorter,
             Routing,
+            ClearingSorter,
             ClearingBlueLidBelt
         }
 
