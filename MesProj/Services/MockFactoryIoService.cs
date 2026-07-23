@@ -158,6 +158,16 @@ namespace MesProj.Services
             return Task.FromResult(0);
         }
 
+        public Task SetBlueLidAutoSortingEnabledAsync(bool enabled, CancellationToken cancellationToken)
+        {
+            lock (_syncRoot)
+            {
+                EnsureConnected();
+            }
+
+            return Task.FromResult(0);
+        }
+
         public Task<bool> ReadDiscreteInputAsync(int address, CancellationToken cancellationToken)
         {
             lock (_syncRoot)

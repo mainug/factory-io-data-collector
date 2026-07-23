@@ -19,6 +19,8 @@ namespace MesProj.Controls
         private readonly Action<string> _setStatus;
         private readonly DataGridView _grid = new DataGridView();
         private readonly DataGridView _sensorGrid = new DataGridView();
+        private readonly DataGridView _sortingGrid = new DataGridView();
+        private readonly DataGridView _sortingSensorGrid = new DataGridView();
         private readonly Label _connectionLabel = new Label();
         private readonly Label _lastCommunicationLabel = new Label();
         private readonly Label _optionsLabel = new Label();
@@ -27,10 +29,13 @@ namespace MesProj.Controls
         private readonly Button _machiningStartButton = new Button();
         private readonly Button _machiningStopButton = new Button();
         private readonly Button _machiningResetButton = new Button();
+        private readonly Button _sortingStartButton = new Button();
+        private readonly Button _sortingStopButton = new Button();
         private bool _materialReady;
         private bool _automaticMachiningEnabled;
         private bool _startPulseInProgress;
         private bool _startAwaitingBusy;
+        private bool _automaticSortingEnabled;
         private DateTime _lastStartPulseAt = DateTime.MinValue;
         private DateTime _lastHandledBusyTimeoutAt = DateTime.MinValue;
 
@@ -120,14 +125,42 @@ namespace MesProj.Controls
             var machiningTab = new TabPage("가공 공정") { Padding = new Padding(6) };
             machiningTab.Controls.Add(machiningLayout);
 
-            var sortingTab = new TabPage("분류·적재 공정") { Padding = new Padding(18) };
-            var sortingPlaceholder = new Label
-            {
-                AutoSize = true,
-                Font = new Font("맑은 고딕", 11, FontStyle.Bold),
-                Text = "분류·적재 공정 제어 화면\r\n\r\nWrite Sensor 이후 출구 이송, 카메라 판별, 색상·형태 분류 및 적재 설비를 이 탭에 추가합니다."
-            };
-            sortingTab.Controls.Add(sortingPlaceholder);
+            var sortingEquipmentGroup = new GroupBox { Text = "분류·적재 공정 I/O", Dock = DockStyle.Fill, Font = new Font("맑은 고딕", 10, FontStyle.Bold) };
+            var sortingEquipmentLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
+            sortingEquipmentLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 55));
+            sortingEquipmentLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 45));
+            var sortingActuatorGroup = new GroupBox { Text = "액추에이터 제어", Dock = DockStyle.Fill };
+            var sortingSensorGroup = new GroupBox { Text = "센서 모니터링", Dock = DockStyle.Fill };
+            ConfigureEquipmentGrid(_sortingGrid);
+            ConfigureSensorGrid(_sortingSensorGrid);
+            sortingActuatorGroup.Controls.Add(_sortingGrid);
+            sortingSensorGroup.Controls.Add(_sortingSensorGrid);
+            sortingEquipmentLayout.Controls.Add(sortingActuatorGroup, 0, 0);
+            sortingEquipmentLayout.Controls.Add(sortingSensorGroup, 0, 1);
+            sortingEquipmentGroup.Controls.Add(sortingEquipmentLayout);
+
+            var sortingOperationGroup = new GroupBox { Text = "Blue Lid 자동 분류", Dock = DockStyle.Fill, Font = new Font("맑은 고딕", 10, FontStyle.Bold) };
+            var sortingOperationLayout = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(10) };
+            _sortingStartButton.Text = "자동 분류 시작";
+            _sortingStartButton.Width = 130;
+            _sortingStartButton.Height = 36;
+            _sortingStartButton.Click += SortingStartButtonClick;
+            _sortingStopButton.Text = "자동 분류 중지";
+            _sortingStopButton.Width = 130;
+            _sortingStopButton.Height = 36;
+            _sortingStopButton.Click += SortingStopButtonClick;
+            sortingOperationLayout.Controls.Add(_sortingStartButton);
+            sortingOperationLayout.Controls.Add(_sortingStopButton);
+            sortingOperationGroup.Controls.Add(sortingOperationLayout);
+
+            var sortingLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
+            sortingLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 76));
+            sortingLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            sortingLayout.Controls.Add(sortingOperationGroup, 0, 0);
+            sortingLayout.Controls.Add(sortingEquipmentGroup, 0, 1);
+
+            var sortingTab = new TabPage("분류·적재 공정") { Padding = new Padding(6) };
+            sortingTab.Controls.Add(sortingLayout);
 
             var processTabs = new TabControl { Dock = DockStyle.Fill };
             processTabs.TabPages.Add(machiningTab);
@@ -147,36 +180,46 @@ namespace MesProj.Controls
 
         private void ConfigureGrid()
         {
-            _grid.Dock = DockStyle.Fill;
-            _grid.AutoGenerateColumns = false;
-            _grid.AllowUserToAddRows = false;
-            _grid.ReadOnly = true;
-            _grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
-            _grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
-            _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "공정 구간", DataPropertyName = "Section" });
-            _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "설비명", DataPropertyName = "Name" });
-            _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "현재 명령 상태", DataPropertyName = "CommandStateText" });
-            _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "I/O 주소", DataPropertyName = "AddressText" });
-            _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "마지막 변경 시각", DataPropertyName = "LastChangedAt" });
+            ConfigureEquipmentGrid(_grid);
+        }
+
+        private void ConfigureEquipmentGrid(DataGridView grid)
+        {
+            grid.Dock = DockStyle.Fill;
+            grid.AutoGenerateColumns = false;
+            grid.AllowUserToAddRows = false;
+            grid.ReadOnly = true;
+            grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+            grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+            grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "공정 구간", DataPropertyName = "Section" });
+            grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "설비명", DataPropertyName = "Name" });
+            grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "현재 명령 상태", DataPropertyName = "CommandStateText" });
+            grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "I/O 주소", DataPropertyName = "AddressText" });
+            grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "마지막 변경 시각", DataPropertyName = "LastChangedAt" });
             var on = new DataGridViewButtonColumn { HeaderText = "ON 설정", Text = "ON", UseColumnTextForButtonValue = true };
             var off = new DataGridViewButtonColumn { HeaderText = "OFF 설정", Text = "OFF", UseColumnTextForButtonValue = true };
-            _grid.Columns.Add(on);
-            _grid.Columns.Add(off);
-            _grid.CellContentClick += GridCellContentClick;
+            grid.Columns.Add(on);
+            grid.Columns.Add(off);
+            grid.CellContentClick += GridCellContentClick;
         }
 
         private void ConfigureSensorGrid()
         {
-            _sensorGrid.Dock = DockStyle.Fill;
-            _sensorGrid.AutoGenerateColumns = false;
-            _sensorGrid.AllowUserToAddRows = false;
-            _sensorGrid.ReadOnly = true;
-            _sensorGrid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
-            _sensorGrid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
-            _sensorGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "센서명", DataPropertyName = "Name" });
-            _sensorGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "현재 상태", DataPropertyName = "StateText" });
-            _sensorGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "I/O 주소", DataPropertyName = "AddressText" });
-            _sensorGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "마지막 변경 시각", DataPropertyName = "LastChangedAt" });
+            ConfigureSensorGrid(_sensorGrid);
+        }
+
+        private static void ConfigureSensorGrid(DataGridView grid)
+        {
+            grid.Dock = DockStyle.Fill;
+            grid.AutoGenerateColumns = false;
+            grid.AllowUserToAddRows = false;
+            grid.ReadOnly = true;
+            grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+            grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+            grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "센서명", DataPropertyName = "Name" });
+            grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "현재 상태", DataPropertyName = "StateText" });
+            grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "I/O 주소", DataPropertyName = "AddressText" });
+            grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "마지막 변경 시각", DataPropertyName = "LastChangedAt" });
         }
 
         private async void GridCellContentClick(object sender, DataGridViewCellEventArgs e)
@@ -186,7 +229,8 @@ namespace MesProj.Controls
                 return;
             }
 
-            var row = _grid.Rows[e.RowIndex].DataBoundItem as EquipmentRow;
+            var sourceGrid = sender as DataGridView;
+            var row = sourceGrid == null ? null : sourceGrid.Rows[e.RowIndex].DataBoundItem as EquipmentRow;
             if (row == null || row.OutputAddress < 0)
             {
                 _setStatus("해당 설비는 출력 Coil 주소가 없어 직접 제어하지 않습니다.");
@@ -290,6 +334,39 @@ namespace MesProj.Controls
             }
         }
 
+        private async void SortingStartButtonClick(object sender, EventArgs e)
+        {
+            await SetAutomaticSortingAsync(true);
+        }
+
+        private async void SortingStopButtonClick(object sender, EventArgs e)
+        {
+            await SetAutomaticSortingAsync(false);
+        }
+
+        private async Task SetAutomaticSortingAsync(bool enabled)
+        {
+            try
+            {
+                using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+                {
+                    await _factoryIoService.SetBlueLidAutoSortingEnabledAsync(enabled, cts.Token);
+                }
+
+                _automaticSortingEnabled = enabled;
+                _setStatus(enabled
+                    ? "Blue Lid 자동 분류를 시작했습니다."
+                    : "Blue Lid 자동 분류를 중지하고 Sorter 출력을 안전 해제했습니다.");
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("Automatic sorting mode change failed.", ex);
+                _setStatus(ex.Message);
+            }
+
+            UpdateSortingButtons(_stateService.GetSnapshot().Summary.ConnectionState);
+        }
+
         private async void MachiningStopButtonClick(object sender, EventArgs e)
         {
             _automaticMachiningEnabled = false;
@@ -383,6 +460,7 @@ namespace MesProj.Controls
                 _materialReady = false;
                 _automaticMachiningEnabled = false;
                 _startAwaitingBusy = false;
+                _automaticSortingEnabled = false;
             }
             if (entranceReady)
             {
@@ -399,20 +477,38 @@ namespace MesProj.Controls
             _machiningStartButton.Enabled = snapshot.Summary.ConnectionState == FactoryConnectionState.Connected;
             _machiningStopButton.Enabled = snapshot.Summary.ConnectionState == FactoryConnectionState.Connected;
             _machiningResetButton.Enabled = snapshot.Summary.ConnectionState == FactoryConnectionState.Connected;
+            UpdateSortingButtons(snapshot.Summary.ConnectionState);
             if (_automaticMachiningEnabled && _materialReady && !machiningBusy && !machiningError)
             {
                 BeginAutomaticMachiningStart(snapshot);
             }
-            var equipmentRows = snapshot.EquipmentStatuses
-                .Where(x => x.OutputAddress >= 0 && !x.IsPulseOutput)
+            var machiningEquipmentRows = snapshot.EquipmentStatuses
+                .Where(x => x.OutputAddress >= 0 && x.OutputAddress <= 1 && !x.IsPulseOutput)
                 .Select(x => new EquipmentRow(x))
                 .ToList();
-            var sensorRows = snapshot.EquipmentStatuses
-                .Where(x => x.InputAddress >= 0)
+            var machiningSensorRows = snapshot.EquipmentStatuses
+                .Where(x => x.InputAddress >= 0 && x.InputAddress <= 3)
                 .Select(x => new SensorRow(x))
                 .ToList();
-            BindPreservingScroll(_grid, equipmentRows);
-            BindPreservingScroll(_sensorGrid, sensorRows);
+            var sortingEquipmentRows = snapshot.EquipmentStatuses
+                .Where(x => x.OutputAddress >= 5 && x.OutputAddress <= 9 && !x.IsPulseOutput)
+                .Select(x => new EquipmentRow(x))
+                .ToList();
+            var sortingSensorRows = snapshot.EquipmentStatuses
+                .Where(x => x.InputAddress >= 4 && x.InputAddress <= 7)
+                .Select(x => new SensorRow(x))
+                .ToList();
+            BindPreservingScroll(_grid, machiningEquipmentRows);
+            BindPreservingScroll(_sensorGrid, machiningSensorRows);
+            BindPreservingScroll(_sortingGrid, sortingEquipmentRows);
+            BindPreservingScroll(_sortingSensorGrid, sortingSensorRows);
+        }
+
+        private void UpdateSortingButtons(FactoryConnectionState connectionState)
+        {
+            var connected = connectionState == FactoryConnectionState.Connected;
+            _sortingStartButton.Enabled = connected && !_automaticSortingEnabled;
+            _sortingStopButton.Enabled = connected && _automaticSortingEnabled;
         }
 
         private static void BindPreservingScroll(DataGridView grid, object dataSource)
@@ -476,13 +572,33 @@ namespace MesProj.Controls
             public EquipmentRow(EquipmentStatus status)
             {
                 Name = status.Name;
-                Section = status.OutputAddress == 0
-                    ? "원소재 이송"
-                    : (status.Key == "ExitBeltSorter1" ? "가공품 배출" : "가공 종류 설정");
+                Section = GetSection(status);
                 CommandState = status.CommandState;
                 FeedbackState = status.FeedbackState;
                 OutputAddress = status.OutputAddress;
                 LastChangedAt = status.LastChangedAt.ToString("HH:mm:ss");
+            }
+
+            private static string GetSection(EquipmentStatus status)
+            {
+                switch (status.Key)
+                {
+                    case "MachiningEntranceBelt":
+                        return "원소재 이송";
+                    case "MachiningType":
+                        return "가공 종류 설정";
+                    case "ExitBeltSorter1":
+                        return "분류기 진입";
+                    case "Sorter1ForwardAndPower":
+                        return "분류기 구동";
+                    case "Sorter1BlueLid":
+                    case "Sorter1GreenLid":
+                        return "경로 분류";
+                    case "BlueLidBelt1":
+                        return "Blue Lid 이송";
+                    default:
+                        return "설비 제어";
+                }
             }
         }
     }

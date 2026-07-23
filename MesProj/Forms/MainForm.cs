@@ -52,7 +52,9 @@ namespace MesProj.Forms
             InitializeLayout();
             _stateService.ApplyFactoryStatus(_factoryIoService.GetFactoryStatusAsync(CancellationToken.None).Result);
             ShowControl(new DashboardControl(_stateService));
-            SetStatus("Mock 모드 준비 완료");
+            SetStatus(_options.Mode == CommunicationMode.ModbusTcp
+                ? "Modbus TCP 모드 준비 완료"
+                : "Mock 모드 준비 완료");
         }
 
         protected override void Dispose(bool disposing)

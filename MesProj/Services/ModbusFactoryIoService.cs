@@ -12,6 +12,11 @@ namespace MesProj.Services
     {
         private const int EntranceBeltStopDelayMilliseconds = 1500;
         private const int ResetRecoveryStabilizationMilliseconds = 5000;
+        private const int SorterPollingMaximumMilliseconds = 100;
+        private const int BlueLidIdentificationTimeoutMilliseconds = 3000;
+        private const int SorterArrivalTimeoutMilliseconds = 10000;
+        private const int SorterExitTimeoutMilliseconds = 5000;
+        private const int BlueLidBeltOverrunMilliseconds = 750;
         private readonly ModbusTcpClient _client = new ModbusTcpClient();
         private readonly object _syncRoot = new object();
         private readonly Dictionary<string, EquipmentStatus> _statuses = new Dictionary<string, EquipmentStatus>();
@@ -20,8 +25,11 @@ namespace MesProj.Services
         {
             FactoryIoMap.MachiningEntranceBelt, FactoryIoMap.MachiningProductType, FactoryIoMap.ExitBeltSorter1,
             FactoryIoMap.MachiningStart, FactoryIoMap.MachiningStop, FactoryIoMap.MachiningReset,
+            FactoryIoMap.Sorter1ForwardAndPower, FactoryIoMap.Sorter1BlueLid,
+            FactoryIoMap.Sorter1GreenLid, FactoryIoMap.BlueLidBelt1,
             FactoryIoMap.MachiningEntranceSensor, FactoryIoMap.MachiningBusy, FactoryIoMap.MachiningError,
-            FactoryIoMap.MachiningOpened, FactoryIoMap.MachiningOutputSensor
+            FactoryIoMap.MachiningOpened, FactoryIoMap.MachiningOutputSensor,
+            FactoryIoMap.ReadSensorSorter1, FactoryIoMap.BlueLidCamera, FactoryIoMap.GreenLidCamera
         };
         private CancellationTokenSource _pollingCts;
         private Task _pollingTask;
@@ -33,6 +41,9 @@ namespace MesProj.Services
         private bool _busyTimeoutRaised;
         private bool _resetRecoveryPending;
         private bool _resetRecoveryWriteSeen;
+        private bool _blueLidAutoSortingEnabled;
+        private BlueLidRouteState _blueLidRouteState = BlueLidRouteState.Idle;
+        private DateTime _blueLidRouteDeadlineUtc = DateTime.MinValue;
         public event EventHandler<FactoryStatus> StatusChanged;
         public event EventHandler<string> CommunicationError;
         public event EventHandler<ProcessEvent> ProcessEventOccurred;
@@ -55,7 +66,7 @@ namespace MesProj.Services
             try
             {
                 await _client.ConnectAsync(options.IpAddress, options.Port, options.DeviceId, options.ConnectionTimeoutMilliseconds, cancellationToken).ConfigureAwait(false);
-                _pollingIntervalMilliseconds = Math.Max(300, options.PollingIntervalMilliseconds);
+                _pollingIntervalMilliseconds = Math.Max(50, Math.Min(SorterPollingMaximumMilliseconds, options.PollingIntervalMilliseconds));
                 ConnectionState = FactoryConnectionState.Connected;
                 lock (_syncRoot)
                 {
@@ -66,12 +77,15 @@ namespace MesProj.Services
                     _busyTimeoutRaised = false;
                     _resetRecoveryPending = false;
                     _resetRecoveryWriteSeen = false;
+                    _blueLidAutoSortingEnabled = false;
+                    ResetBlueLidRouteState();
                     foreach (var status in _statuses.Values)
                     {
                         status.State = EquipmentState.Stopped;
                         status.LastChangedAt = DateTime.Now;
                     }
                 }
+                await StopSorterOutputsAsync(cancellationToken).ConfigureAwait(false);
                 StartPolling();
                 RaiseStatus();
             }
@@ -83,9 +97,20 @@ namespace MesProj.Services
             }
         }
 
-        public Task DisconnectAsync(CancellationToken cancellationToken)
+        public async Task DisconnectAsync(CancellationToken cancellationToken)
         {
             StopPolling();
+            if (_client.IsConnected)
+            {
+                try
+                {
+                    await StopSorterOutputsAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Error("Sorter safe stop during disconnect failed.", ex);
+                }
+            }
             _client.Disconnect();
             ConnectionState = FactoryConnectionState.Disconnected;
             lock (_syncRoot)
@@ -103,9 +128,10 @@ namespace MesProj.Services
                 _busyTimeoutRaised = false;
                 _resetRecoveryPending = false;
                 _resetRecoveryWriteSeen = false;
+                _blueLidAutoSortingEnabled = false;
+                ResetBlueLidRouteState();
             }
             RaiseStatus();
-            return Task.FromResult(0);
         }
 
         public Task<FactoryStatus> GetFactoryStatusAsync(CancellationToken cancellationToken)
@@ -134,6 +160,22 @@ namespace MesProj.Services
                 {
                     if (_statuses[FactoryIoMap.MachiningEntranceSensor.Key].FeedbackState)
                         throw new InvalidOperationException("입구 센서에 소재가 감지되어 Entrance belt를 가동할 수 없습니다.");
+                }
+            }
+            if (value && address == FactoryIoMap.Sorter1BlueLid.OutputAddress)
+            {
+                lock (_syncRoot)
+                {
+                    if (_statuses[FactoryIoMap.Sorter1GreenLid.Key].CommandState)
+                        throw new InvalidOperationException("Sorter 1 Blue Lid와 Green Lid는 동시에 ON할 수 없습니다.");
+                }
+            }
+            if (value && address == FactoryIoMap.Sorter1GreenLid.OutputAddress)
+            {
+                lock (_syncRoot)
+                {
+                    if (_statuses[FactoryIoMap.Sorter1BlueLid.Key].CommandState)
+                        throw new InvalidOperationException("Sorter 1 Green Lid와 Blue Lid는 동시에 ON할 수 없습니다.");
                 }
             }
             if (address == FactoryIoMap.MachiningReset.OutputAddress && value)
@@ -176,6 +218,24 @@ namespace MesProj.Services
                 }
             }
             AppLogger.Info(string.Format("MODBUS WRITE Coil {0} {1} ({2})", address, value ? "ON" : "OFF", definition.Key));
+            RaiseStatus();
+        }
+
+        public async Task SetBlueLidAutoSortingEnabledAsync(bool enabled, CancellationToken cancellationToken)
+        {
+            if (ConnectionState != FactoryConnectionState.Connected)
+                throw new InvalidOperationException("Factory I/O 연결 후 자동 분류를 시작할 수 있습니다.");
+
+            lock (_syncRoot)
+            {
+                _blueLidAutoSortingEnabled = enabled;
+                if (!enabled) ResetBlueLidRouteState();
+            }
+
+            if (!enabled)
+                await StopSorterOutputsAsync(cancellationToken).ConfigureAwait(false);
+
+            AppLogger.Info("BLUE LID AUTO SORTING " + (enabled ? "ENABLED" : "DISABLED"));
             RaiseStatus();
         }
 
@@ -270,6 +330,9 @@ namespace MesProj.Services
                         if (risingEdge || fallingEdge)
                             AppLogger.Info(string.Format("MODBUS INPUT Input {0} {1} ({2})",
                                 definition.FeedbackInputAddress, sensor ? "ON" : "OFF", definition.Key));
+
+                        if (risingEdge || fallingEdge)
+                            await HandleBlueLidSensorEdgeAsync(definition, risingEdge, fallingEdge, cancellationToken).ConfigureAwait(false);
 
                         if (definition.Key == FactoryIoMap.MachiningOpened.Key)
                         {
@@ -377,6 +440,7 @@ namespace MesProj.Services
                             }
                         }
                     }
+                    await CheckBlueLidRouteTimersAsync(cancellationToken).ConfigureAwait(false);
                     CheckMachiningBusyTimeout();
                     _machiningProgress = await _client.ReadInputRegisterAsync(0, cancellationToken).ConfigureAwait(false);
                     RaiseStatus();
@@ -394,6 +458,193 @@ namespace MesProj.Services
                     return;
                 }
             }
+        }
+
+        private async Task HandleBlueLidSensorEdgeAsync(
+            EquipmentDefinition definition,
+            bool risingEdge,
+            bool fallingEdge,
+            CancellationToken cancellationToken)
+        {
+            if (definition.Key == FactoryIoMap.MachiningOutputSensor.Key && risingEdge)
+            {
+                var routeCanStart = false;
+                lock (_syncRoot)
+                {
+                    routeCanStart = _blueLidAutoSortingEnabled && !_resetRecoveryPending &&
+                        _blueLidRouteState == BlueLidRouteState.Idle;
+                    if (routeCanStart)
+                    {
+                        _blueLidRouteState = BlueLidRouteState.AwaitingIdentification;
+                        _blueLidRouteDeadlineUtc = DateTime.UtcNow.AddMilliseconds(BlueLidIdentificationTimeoutMilliseconds);
+                    }
+                }
+                AppLogger.Info(routeCanStart
+                    ? "BLUE LID ROUTE awaiting camera identification"
+                    : "BLUE LID ROUTE ignored Write Sensor while route is active or reset recovery is pending");
+                return;
+            }
+
+            if (definition.Key == FactoryIoMap.GreenLidCamera.Key && risingEdge)
+            {
+                var canceled = false;
+                lock (_syncRoot)
+                {
+                    canceled = _blueLidRouteState == BlueLidRouteState.AwaitingIdentification;
+                    if (canceled) ResetBlueLidRouteState();
+                }
+                if (canceled) AppLogger.Info("BLUE LID ROUTE canceled by Green Lid Camera");
+                return;
+            }
+
+            if (definition.Key == FactoryIoMap.BlueLidCamera.Key && risingEdge)
+            {
+                var prepareRoute = false;
+                lock (_syncRoot)
+                {
+                    prepareRoute = _blueLidRouteState == BlueLidRouteState.AwaitingIdentification &&
+                        DateTime.UtcNow <= _blueLidRouteDeadlineUtc;
+                }
+                if (!prepareRoute)
+                {
+                    AppLogger.Info("BLUE LID ROUTE ignored camera signal without Write Sensor latch");
+                    return;
+                }
+
+                await SetSorterOutputAsync(FactoryIoMap.Sorter1GreenLid, false, cancellationToken).ConfigureAwait(false);
+                await SetSorterOutputAsync(FactoryIoMap.Sorter1BlueLid, true, cancellationToken).ConfigureAwait(false);
+                await SetSorterOutputAsync(FactoryIoMap.BlueLidBelt1, true, cancellationToken).ConfigureAwait(false);
+                lock (_syncRoot)
+                {
+                    _blueLidRouteState = BlueLidRouteState.WaitingForSorter;
+                    _blueLidRouteDeadlineUtc = DateTime.UtcNow.AddMilliseconds(SorterArrivalTimeoutMilliseconds);
+                }
+                AppLogger.Info("BLUE LID ROUTE prepared Coil 7 ON, Coil 8 OFF, Coil 9 ON");
+                return;
+            }
+
+            if (definition.Key != FactoryIoMap.ReadSensorSorter1.Key) return;
+
+            if (risingEdge)
+            {
+                var startSorter = false;
+                lock (_syncRoot)
+                {
+                    startSorter = _blueLidRouteState == BlueLidRouteState.WaitingForSorter;
+                }
+                if (!startSorter) return;
+
+                await SetSorterOutputAsync(FactoryIoMap.Sorter1ForwardAndPower, true, cancellationToken).ConfigureAwait(false);
+                lock (_syncRoot)
+                {
+                    _blueLidRouteState = BlueLidRouteState.Routing;
+                    _blueLidRouteDeadlineUtc = DateTime.UtcNow.AddMilliseconds(SorterExitTimeoutMilliseconds);
+                }
+                AppLogger.Info("BLUE LID ROUTE started Coil 6 ON");
+                return;
+            }
+
+            if (fallingEdge)
+            {
+                var finishSorter = false;
+                lock (_syncRoot)
+                {
+                    finishSorter = _blueLidRouteState == BlueLidRouteState.Routing;
+                }
+                if (!finishSorter) return;
+
+                await SetSorterOutputAsync(FactoryIoMap.Sorter1ForwardAndPower, false, cancellationToken).ConfigureAwait(false);
+                await SetSorterOutputAsync(FactoryIoMap.Sorter1BlueLid, false, cancellationToken).ConfigureAwait(false);
+                lock (_syncRoot)
+                {
+                    _blueLidRouteState = BlueLidRouteState.ClearingBlueLidBelt;
+                    _blueLidRouteDeadlineUtc = DateTime.UtcNow.AddMilliseconds(BlueLidBeltOverrunMilliseconds);
+                }
+                AppLogger.Info("BLUE LID ROUTE sorter cleared, Coil 9 overrun started");
+            }
+        }
+
+        private async Task CheckBlueLidRouteTimersAsync(CancellationToken cancellationToken)
+        {
+            BlueLidRouteState expiredState;
+            lock (_syncRoot)
+            {
+                if (_blueLidRouteState == BlueLidRouteState.Idle || DateTime.UtcNow < _blueLidRouteDeadlineUtc)
+                    return;
+                expiredState = _blueLidRouteState;
+                ResetBlueLidRouteState();
+            }
+
+            if (expiredState == BlueLidRouteState.AwaitingIdentification)
+            {
+                AppLogger.Info("BLUE LID ROUTE identification window expired");
+                return;
+            }
+
+            if (expiredState == BlueLidRouteState.ClearingBlueLidBelt)
+            {
+                await SetSorterOutputAsync(FactoryIoMap.BlueLidBelt1, false, cancellationToken).ConfigureAwait(false);
+                AppLogger.Info("BLUE LID ROUTE completed Coil 9 OFF");
+                return;
+            }
+
+            await StopSorterOutputsAsync(cancellationToken).ConfigureAwait(false);
+            RaiseSorterAlarm(
+                expiredState == BlueLidRouteState.WaitingForSorter ? "SORTER_1_ARRIVAL_TIMEOUT" : "SORTER_1_EXIT_TIMEOUT",
+                expiredState == BlueLidRouteState.WaitingForSorter
+                    ? "Blue Lid가 제한시간 안에 Sorter 1에 도착하지 않았습니다."
+                    : "Blue Lid가 제한시간 안에 Sorter 1을 통과하지 못했습니다.");
+        }
+
+        private async Task SetSorterOutputAsync(
+            EquipmentDefinition definition,
+            bool value,
+            CancellationToken cancellationToken)
+        {
+            await _client.WriteSingleCoilAsync((ushort)definition.OutputAddress, value, cancellationToken).ConfigureAwait(false);
+            lock (_syncRoot)
+            {
+                var status = _statuses[definition.Key];
+                status.CommandState = value;
+                status.State = value ? EquipmentState.Running : EquipmentState.Stopped;
+                status.LastChangedAt = DateTime.Now;
+            }
+            AppLogger.Info(string.Format("AUTO WRITE Coil {0} {1} ({2})",
+                definition.OutputAddress, value ? "ON" : "OFF", definition.Key));
+        }
+
+        private async Task StopSorterOutputsAsync(CancellationToken cancellationToken)
+        {
+            await SetSorterOutputAsync(FactoryIoMap.Sorter1ForwardAndPower, false, cancellationToken).ConfigureAwait(false);
+            await SetSorterOutputAsync(FactoryIoMap.Sorter1BlueLid, false, cancellationToken).ConfigureAwait(false);
+            await SetSorterOutputAsync(FactoryIoMap.Sorter1GreenLid, false, cancellationToken).ConfigureAwait(false);
+            await SetSorterOutputAsync(FactoryIoMap.BlueLidBelt1, false, cancellationToken).ConfigureAwait(false);
+            lock (_syncRoot)
+            {
+                ResetBlueLidRouteState();
+            }
+        }
+
+        private void ResetBlueLidRouteState()
+        {
+            _blueLidRouteState = BlueLidRouteState.Idle;
+            _blueLidRouteDeadlineUtc = DateTime.MinValue;
+        }
+
+        private void RaiseSorterAlarm(string code, string message)
+        {
+            var alarm = new AlarmRecord
+            {
+                OccurredAt = DateTime.Now,
+                EquipmentName = "Sorter 1",
+                AlarmCode = code,
+                Message = message,
+                Severity = "Warning",
+                IsAcknowledged = false
+            };
+            AppLogger.Info("ALARM " + code);
+            var handler = AlarmOccurred;
+            if (handler != null) handler(this, alarm);
         }
 
         private static void ValidateAddress(int address)
@@ -509,7 +760,19 @@ namespace MesProj.Services
             if (key == "MachiningError") return "가공 오류";
             if (key == "MachiningOpened") return "가공기 개방";
             if (key == "MachiningOutputSensor") return "가공품 배출";
+            if (key == "BlueLidCamera") return "Blue Lid 판별";
+            if (key == "GreenLidCamera") return "Green Lid 판별";
+            if (key == "ReadSensorSorter1") return "Sorter 1 도착";
             return "기타";
+        }
+
+        private enum BlueLidRouteState
+        {
+            Idle,
+            AwaitingIdentification,
+            WaitingForSorter,
+            Routing,
+            ClearingBlueLidBelt
         }
 
         private void RaiseError(string message)

@@ -165,7 +165,7 @@ namespace MesProj.Models
                 IpAddress = "127.0.0.1",
                 Port = 502,
                 DeviceId = 1,
-                PollingIntervalMilliseconds = 1000,
+                PollingIntervalMilliseconds = 100,
                 ConnectionTimeoutMilliseconds = 3000,
                 AutoReconnect = true
             };

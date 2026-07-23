@@ -46,7 +46,7 @@ namespace MesProj.Controls
             _port.Maximum = 65535;
             _deviceId.Minimum = 1;
             _deviceId.Maximum = 247;
-            _polling.Minimum = 300;
+            _polling.Minimum = 50;
             _polling.Maximum = 60000;
             _timeout.Minimum = 500;
             _timeout.Maximum = 60000;
