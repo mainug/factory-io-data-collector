@@ -13,10 +13,12 @@ namespace MesProj.Controls
     {
         private readonly IApplicationStateService _stateService;
         private readonly Dictionary<string, Label> _summaryLabels = new Dictionary<string, Label>();
+        private readonly Dictionary<string, EquipmentCard> _equipmentCards = new Dictionary<string, EquipmentCard>();
         private readonly FlowLayoutPanel _equipmentPanel = new FlowLayoutPanel();
         private readonly ProgressBar _progressBar = new ProgressBar();
         private readonly Label _progressLabel = new Label();
         private readonly DataGridView _alarmGrid = new DataGridView();
+        private string _alarmSignature = string.Empty;
 
         public DashboardControl(IApplicationStateService stateService)
         {
@@ -39,9 +41,9 @@ namespace MesProj.Controls
         private void InitializeLayout()
         {
             var root = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 4, ColumnCount = 1 };
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 204));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 185));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 82));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 104));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 168));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 78));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
             var summary = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = true, AutoScroll = true, Padding = new Padding(0, 0, 0, 4) };
@@ -126,8 +128,85 @@ namespace MesProj.Controls
             _progressBar.Value = Math.Max(0, Math.Min(100, summary.AchievementRate));
             _progressLabel.Text = string.Format("{0} / {1} EA    달성률 {2}%", summary.CurrentQuantity, summary.TargetQuantity, summary.AchievementRate);
 
-            RenderEquipment(snapshot.EquipmentStatuses.Where(x => x.OutputAddress >= 0).ToList());
-            _alarmGrid.DataSource = snapshot.RecentAlarms.Select(x => new AlarmGridRow(x)).ToList();
+            RenderEquipmentCached(snapshot.EquipmentStatuses.Where(x => x.OutputAddress >= 0).ToList());
+            RenderAlarms(snapshot.RecentAlarms);
+        }
+
+        private void RenderEquipmentCached(IReadOnlyList<EquipmentStatus> statuses)
+        {
+            var activeKeys = new HashSet<string>(statuses.Select(x => x.Key));
+            foreach (var key in _equipmentCards.Keys.Where(x => !activeKeys.Contains(x)).ToList())
+            {
+                var staleCard = _equipmentCards[key];
+                _equipmentPanel.Controls.Remove(staleCard.Panel);
+                staleCard.Panel.Dispose();
+                _equipmentCards.Remove(key);
+            }
+
+            foreach (var status in statuses)
+            {
+                EquipmentCard card;
+                if (!_equipmentCards.TryGetValue(status.Key, out card))
+                {
+                    card = CreateEquipmentCard(status);
+                    _equipmentCards[status.Key] = card;
+                    _equipmentPanel.Controls.Add(card.Panel);
+                }
+
+                UpdateEquipmentCard(card, status);
+            }
+        }
+
+        private EquipmentCard CreateEquipmentCard(EquipmentStatus status)
+        {
+            var panel = new Panel
+            {
+                Width = 174,
+                Height = 62,
+                Margin = new Padding(0, 0, 8, 8),
+                BackColor = status.State.ToBackColor()
+            };
+            var stateLabel = new Label { Dock = DockStyle.Bottom, Height = 26, TextAlign = ContentAlignment.MiddleCenter, Font = new Font("맑은 고딕", 10, FontStyle.Bold) };
+            var nameLabel = new Label { Dock = DockStyle.Top, Height = 34, TextAlign = ContentAlignment.MiddleCenter, Font = new Font("맑은 고딕", 9, FontStyle.Bold) };
+            panel.Controls.Add(stateLabel);
+            panel.Controls.Add(nameLabel);
+            return new EquipmentCard(panel, nameLabel, stateLabel);
+        }
+
+        private static void UpdateEquipmentCard(EquipmentCard card, EquipmentStatus status)
+        {
+            var backColor = status.State.ToBackColor();
+            var stateText = status.State.ToDisplayText();
+            var stateColor = status.State.ToForeColor();
+
+            if (card.Panel.BackColor != backColor) card.Panel.BackColor = backColor;
+            if (card.NameLabel.Text != status.Name) card.NameLabel.Text = status.Name;
+            if (card.StateLabel.Text != stateText) card.StateLabel.Text = stateText;
+            if (card.StateLabel.ForeColor != stateColor) card.StateLabel.ForeColor = stateColor;
+        }
+
+        private void RenderAlarms(IReadOnlyList<AlarmRecord> alarms)
+        {
+            var signature = string.Join("|", alarms.Select(x =>
+                x.OccurredAt.Ticks + ":" + x.EquipmentName + ":" + x.AlarmCode + ":" + x.IsAcknowledged));
+            if (_alarmSignature == signature) return;
+
+            _alarmSignature = signature;
+            _alarmGrid.DataSource = alarms.Select(x => new AlarmGridRow(x)).ToList();
+        }
+
+        private sealed class EquipmentCard
+        {
+            public EquipmentCard(Panel panel, Label nameLabel, Label stateLabel)
+            {
+                Panel = panel;
+                NameLabel = nameLabel;
+                StateLabel = stateLabel;
+            }
+
+            public Panel Panel { get; private set; }
+            public Label NameLabel { get; private set; }
+            public Label StateLabel { get; private set; }
         }
 
         private void RenderEquipment(IReadOnlyList<EquipmentStatus> statuses)
@@ -137,8 +216,8 @@ namespace MesProj.Controls
             {
                 var panel = new Panel
                 {
-                    Width = 176,
-                    Height = 66,
+                    Width = 174,
+                    Height = 62,
                     Margin = new Padding(0, 0, 8, 8),
                     BackColor = status.State.ToBackColor()
                 };

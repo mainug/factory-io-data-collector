@@ -70,6 +70,17 @@ namespace MesProj.Services
             if (response.Length != 5) throw new IOException("잘못된 Coil 쓰기 응답입니다.");
         }
 
+        public async Task WriteSingleRegisterAsync(ushort address, ushort value, CancellationToken cancellationToken)
+        {
+            var data = new byte[]
+            {
+                (byte)(address >> 8), (byte)address,
+                (byte)(value >> 8), (byte)value
+            };
+            var response = await SendAsync(6, data, cancellationToken).ConfigureAwait(false);
+            if (response.Length != 5) throw new IOException("잘못된 Register 쓰기 응답입니다.");
+        }
+
         public void Dispose()
         {
             DisposeConnection();

@@ -22,8 +22,16 @@ namespace MesProj.Services
 
         public event EventHandler<FactoryStatus> StatusChanged;
         public event EventHandler<string> CommunicationError;
-        public event EventHandler<ProcessEvent> ProcessEventOccurred;
-        public event EventHandler<AlarmRecord> AlarmOccurred;
+        public event EventHandler<ProcessEvent> ProcessEventOccurred
+        {
+            add { }
+            remove { }
+        }
+        public event EventHandler<AlarmRecord> AlarmOccurred
+        {
+            add { }
+            remove { }
+        }
 
         public FactoryConnectionState ConnectionState
         {
@@ -158,7 +166,7 @@ namespace MesProj.Services
             return Task.FromResult(0);
         }
 
-        public Task SetBlueLidAutoSortingEnabledAsync(bool enabled, CancellationToken cancellationToken)
+        public Task SetLidAutoSortingEnabledAsync(bool enabled, CancellationToken cancellationToken)
         {
             lock (_syncRoot)
             {
@@ -182,7 +190,7 @@ namespace MesProj.Services
             lock (_syncRoot)
             {
                 EnsureConnected();
-                if (address == FactoryIoMap.VisionRegister)
+                if (address == FactoryIoMap.MachiningProgressRegister)
                 {
                     return Task.FromResult(_random.Next(0, 2));
                 }

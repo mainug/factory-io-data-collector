@@ -20,7 +20,7 @@ namespace MesProj.Services
         Task<FactoryStatus> GetFactoryStatusAsync(CancellationToken cancellationToken);
         Task<EquipmentStatus> GetEquipmentStatusAsync(string equipmentKey, CancellationToken cancellationToken);
         Task WriteCoilAsync(int address, bool value, CancellationToken cancellationToken);
-        Task SetBlueLidAutoSortingEnabledAsync(bool enabled, CancellationToken cancellationToken);
+        Task SetLidAutoSortingEnabledAsync(bool enabled, CancellationToken cancellationToken);
         Task<bool> ReadDiscreteInputAsync(int address, CancellationToken cancellationToken);
         Task<int> ReadHoldingRegisterAsync(int address, CancellationToken cancellationToken);
         Task<int> ReadInputRegisterAsync(int address, CancellationToken cancellationToken);

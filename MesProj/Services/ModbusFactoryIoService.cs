@@ -13,11 +13,20 @@ namespace MesProj.Services
         private const int EntranceBeltStopDelayMilliseconds = 1500;
         private const int ResetRecoveryStabilizationMilliseconds = 5000;
         private const int SorterPollingMaximumMilliseconds = 100;
-        private const int BlueLidIdentificationTimeoutMilliseconds = 3000;
-        private const int SorterArrivalTimeoutMilliseconds = 10000;
         private const int SorterExitTimeoutMilliseconds = 5000;
         private const int SorterDischargeOverrunMilliseconds = 1500;
         private const int BlueLidBeltOverrunMilliseconds = 8500;
+        private const int GreenLidBeltOverrunMilliseconds = 8500;
+        private const int GreenLidPackingSettleMilliseconds = 500;
+        private const int GreenLidPackingDropMilliseconds = 900;
+        private const int GreenLidPackingReleaseMilliseconds = 900;
+        private const int GreenLidSetPointHomeValue = 0;
+        private const int GreenLidXPickValue = 890;
+        private const int GreenLidXPlaceValue = 100;
+        private const int GreenLidZPickValue = 1000;
+        private const int GreenLidSetPointMoveDelayMilliseconds = 900;
+        private const int GreenLidPositionTolerance = 10;
+        private const int GreenLidPositionTimeoutMilliseconds = 5000;
         private readonly ModbusTcpClient _client = new ModbusTcpClient();
         private readonly object _syncRoot = new object();
         private readonly Dictionary<string, EquipmentStatus> _statuses = new Dictionary<string, EquipmentStatus>();
@@ -27,10 +36,18 @@ namespace MesProj.Services
             FactoryIoMap.MachiningEntranceBelt, FactoryIoMap.MachiningProductType, FactoryIoMap.ExitBeltSorter1,
             FactoryIoMap.MachiningStart, FactoryIoMap.MachiningStop, FactoryIoMap.MachiningReset,
             FactoryIoMap.Sorter1ForwardAndPower, FactoryIoMap.Sorter1BlueLid,
-            FactoryIoMap.Sorter1GreenLid, FactoryIoMap.BlueLidBelt1,
+            FactoryIoMap.Sorter1GreenLid, FactoryIoMap.BlueLidBelt1, FactoryIoMap.GreenLidBelt1,
+            FactoryIoMap.GreenLidBelt2, FactoryIoMap.GreenLidRoller1, FactoryIoMap.RightPositioner4Raise,
+            FactoryIoMap.GreenLidGrab, FactoryIoMap.GreenLidPositionerClamp,
+            FactoryIoMap.GreenLidRoller2, FactoryIoMap.GreenLidRoller3, FactoryIoMap.GreenLidRoller4,
+            FactoryIoMap.GreenLidRoller5, FactoryIoMap.StackerCraneGreenLidLeft,
             FactoryIoMap.MachiningEntranceSensor, FactoryIoMap.MachiningBusy, FactoryIoMap.MachiningError,
             FactoryIoMap.MachiningOpened, FactoryIoMap.MachiningOutputSensor,
-            FactoryIoMap.ReadSensorSorter1, FactoryIoMap.BlueLidCamera, FactoryIoMap.GreenLidCamera
+            FactoryIoMap.ReadSensorSorter1, FactoryIoMap.BlueLidCamera, FactoryIoMap.GreenLidCamera,
+            FactoryIoMap.RightPositioner4Limit, FactoryIoMap.GreenLidStopRollerSensor,
+            FactoryIoMap.GreenLidGrabSensor, FactoryIoMap.GreenLidPositionerSensor,
+            FactoryIoMap.GreenLidPositionerClampSensor,
+            FactoryIoMap.GreenLidXMovingSensor, FactoryIoMap.GreenLidZMovingSensor
         };
         private CancellationTokenSource _pollingCts;
         private Task _pollingTask;
@@ -45,6 +62,9 @@ namespace MesProj.Services
         private bool _blueLidAutoSortingEnabled;
         private BlueLidRouteState _blueLidRouteState = BlueLidRouteState.Idle;
         private DateTime _blueLidRouteDeadlineUtc = DateTime.MinValue;
+        private LidRouteColor _activeLidRouteColor = LidRouteColor.None;
+        private GreenLidPackingState _greenLidPackingState = GreenLidPackingState.Idle;
+        private bool _greenLidStopSensorReleasePending;
         public event EventHandler<FactoryStatus> StatusChanged;
         public event EventHandler<string> CommunicationError;
         public event EventHandler<ProcessEvent> ProcessEventOccurred;
@@ -80,6 +100,7 @@ namespace MesProj.Services
                     _resetRecoveryWriteSeen = false;
                     _blueLidAutoSortingEnabled = false;
                     ResetBlueLidRouteState();
+                    ResetGreenLidPackingState();
                     foreach (var status in _statuses.Values)
                     {
                         status.State = EquipmentState.Stopped;
@@ -131,6 +152,7 @@ namespace MesProj.Services
                 _resetRecoveryWriteSeen = false;
                 _blueLidAutoSortingEnabled = false;
                 ResetBlueLidRouteState();
+                ResetGreenLidPackingState();
             }
             RaiseStatus();
         }
@@ -222,18 +244,24 @@ namespace MesProj.Services
             RaiseStatus();
         }
 
-        public async Task SetBlueLidAutoSortingEnabledAsync(bool enabled, CancellationToken cancellationToken)
+        public async Task SetLidAutoSortingEnabledAsync(bool enabled, CancellationToken cancellationToken)
         {
             if (ConnectionState != FactoryConnectionState.Connected)
                 throw new InvalidOperationException("Factory I/O 연결 후 자동 분류를 시작할 수 있습니다.");
 
             if (enabled)
             {
+                await ResetGreenLidSetPointsAsync(cancellationToken).ConfigureAwait(false);
                 await SetSorterOutputAsync(FactoryIoMap.ExitBeltSorter1, true, cancellationToken).ConfigureAwait(false);
+                await SetSorterOutputAsync(FactoryIoMap.Sorter1ForwardAndPower, true, cancellationToken).ConfigureAwait(false);
+                await SetSorterOutputAsync(FactoryIoMap.GreenLidBelt2, true, cancellationToken).ConfigureAwait(false);
+                await SetGreenLidRoller1IfStopSensorClearAsync(cancellationToken).ConfigureAwait(false);
+                await SetGreenLidAlwaysRollersAsync(true, cancellationToken).ConfigureAwait(false);
                 lock (_syncRoot)
                 {
                     _blueLidAutoSortingEnabled = true;
                     ResetBlueLidRouteState();
+                    ResetGreenLidPackingState();
                 }
             }
             else
@@ -246,7 +274,7 @@ namespace MesProj.Services
                 await StopSorterOutputsAsync(cancellationToken).ConfigureAwait(false);
             }
 
-            AppLogger.Info("BLUE LID AUTO SORTING " + (enabled ? "ENABLED" : "DISABLED"));
+            AppLogger.Info("LID AUTO SORTING " + (enabled ? "ENABLED" : "DISABLED"));
             RaiseStatus();
         }
 
@@ -344,6 +372,21 @@ namespace MesProj.Services
 
                         if (risingEdge || fallingEdge)
                             await HandleBlueLidSensorEdgeAsync(definition, risingEdge, fallingEdge, cancellationToken).ConfigureAwait(false);
+
+                        if (sensor && !risingEdge && definition.Key == FactoryIoMap.BlueLidCamera.Key && ShouldRefreshLidRoute(LidRouteColor.Blue))
+                            await SelectLidRouteAsync(LidRouteColor.Blue, cancellationToken).ConfigureAwait(false);
+
+                        if (sensor && !risingEdge && definition.Key == FactoryIoMap.GreenLidCamera.Key && ShouldRefreshLidRoute(LidRouteColor.Green))
+                            await SelectLidRouteAsync(LidRouteColor.Green, cancellationToken).ConfigureAwait(false);
+
+                        if (risingEdge || fallingEdge)
+                            await HandleGreenLidPackingSensorEdgeAsync(definition, risingEdge, fallingEdge, cancellationToken).ConfigureAwait(false);
+
+                        if (definition.Key == FactoryIoMap.GreenLidStopRollerSensor.Key && sensor && !IsGreenLidStopSensorReleasePending())
+                            await StopGreenLidRoller1ForStopSensorAsync(cancellationToken).ConfigureAwait(false);
+
+                        if (definition.Key == FactoryIoMap.GreenLidPositionerSensor.Key && sensor && !risingEdge)
+                            await ClampGreenLidPositionerAsync(cancellationToken).ConfigureAwait(false);
 
                         if (definition.Key == FactoryIoMap.MachiningOpened.Key)
                         {
@@ -453,7 +496,9 @@ namespace MesProj.Services
                     }
                     await CheckBlueLidRouteTimersAsync(cancellationToken).ConfigureAwait(false);
                     CheckMachiningBusyTimeout();
-                    _machiningProgress = await _client.ReadInputRegisterAsync(0, cancellationToken).ConfigureAwait(false);
+                    _machiningProgress = await _client.ReadInputRegisterAsync(
+                        FactoryIoMap.MachiningProgressRegister,
+                        cancellationToken).ConfigureAwait(false);
                     RaiseStatus();
                     await Task.Delay(_pollingIntervalMilliseconds, cancellationToken).ConfigureAwait(false);
                 }
@@ -479,58 +524,19 @@ namespace MesProj.Services
         {
             if (definition.Key == FactoryIoMap.MachiningOutputSensor.Key && risingEdge)
             {
-                var routeCanStart = false;
-                lock (_syncRoot)
-                {
-                    routeCanStart = _blueLidAutoSortingEnabled && !_resetRecoveryPending &&
-                        _blueLidRouteState == BlueLidRouteState.Idle;
-                    if (routeCanStart)
-                    {
-                        _blueLidRouteState = BlueLidRouteState.AwaitingIdentification;
-                        _blueLidRouteDeadlineUtc = DateTime.UtcNow.AddMilliseconds(BlueLidIdentificationTimeoutMilliseconds);
-                    }
-                }
-                AppLogger.Info(routeCanStart
-                    ? "BLUE LID ROUTE awaiting camera identification"
-                    : "BLUE LID ROUTE ignored Write Sensor while route is active or reset recovery is pending");
-                return;
-            }
-
-            if (definition.Key == FactoryIoMap.GreenLidCamera.Key && risingEdge)
-            {
-                var canceled = false;
-                lock (_syncRoot)
-                {
-                    canceled = _blueLidRouteState == BlueLidRouteState.AwaitingIdentification;
-                    if (canceled) ResetBlueLidRouteState();
-                }
-                if (canceled) AppLogger.Info("BLUE LID ROUTE canceled by Green Lid Camera");
+                AppLogger.Info("LID ROUTE Write Sensor detected. Camera inputs select sorter direction.");
                 return;
             }
 
             if (definition.Key == FactoryIoMap.BlueLidCamera.Key && risingEdge)
             {
-                var prepareRoute = false;
-                lock (_syncRoot)
-                {
-                    prepareRoute = _blueLidRouteState == BlueLidRouteState.AwaitingIdentification &&
-                        DateTime.UtcNow <= _blueLidRouteDeadlineUtc;
-                }
-                if (!prepareRoute)
-                {
-                    AppLogger.Info("BLUE LID ROUTE ignored camera signal without Write Sensor latch");
-                    return;
-                }
+                await SelectLidRouteAsync(LidRouteColor.Blue, cancellationToken).ConfigureAwait(false);
+                return;
+            }
 
-                await SetSorterOutputAsync(FactoryIoMap.Sorter1GreenLid, false, cancellationToken).ConfigureAwait(false);
-                await SetSorterOutputAsync(FactoryIoMap.Sorter1BlueLid, true, cancellationToken).ConfigureAwait(false);
-                await SetSorterOutputAsync(FactoryIoMap.BlueLidBelt1, true, cancellationToken).ConfigureAwait(false);
-                lock (_syncRoot)
-                {
-                    _blueLidRouteState = BlueLidRouteState.WaitingForSorter;
-                    _blueLidRouteDeadlineUtc = DateTime.UtcNow.AddMilliseconds(SorterArrivalTimeoutMilliseconds);
-                }
-                AppLogger.Info("BLUE LID ROUTE prepared Coil 7 ON, Coil 8 OFF, Coil 9 ON");
+            if (definition.Key == FactoryIoMap.GreenLidCamera.Key && risingEdge)
+            {
+                await SelectLidRouteAsync(LidRouteColor.Green, cancellationToken).ConfigureAwait(false);
                 return;
             }
 
@@ -538,20 +544,14 @@ namespace MesProj.Services
 
             if (risingEdge)
             {
-                var startSorter = false;
+                var routeActive = false;
                 lock (_syncRoot)
                 {
-                    startSorter = _blueLidRouteState == BlueLidRouteState.WaitingForSorter;
+                    routeActive = _blueLidRouteState == BlueLidRouteState.Routing;
+                    if (routeActive)
+                        _blueLidRouteDeadlineUtc = DateTime.UtcNow.AddMilliseconds(SorterExitTimeoutMilliseconds);
                 }
-                if (!startSorter) return;
-
-                await SetSorterOutputAsync(FactoryIoMap.Sorter1ForwardAndPower, true, cancellationToken).ConfigureAwait(false);
-                lock (_syncRoot)
-                {
-                    _blueLidRouteState = BlueLidRouteState.Routing;
-                    _blueLidRouteDeadlineUtc = DateTime.UtcNow.AddMilliseconds(SorterExitTimeoutMilliseconds);
-                }
-                AppLogger.Info("BLUE LID ROUTE started Coil 6 ON");
+                if (routeActive) AppLogger.Info("LID ROUTE Sorter 1 sensor occupied, exit timeout refreshed");
                 return;
             }
 
@@ -569,29 +569,110 @@ namespace MesProj.Services
                     _blueLidRouteState = BlueLidRouteState.ClearingSorter;
                     _blueLidRouteDeadlineUtc = DateTime.UtcNow.AddMilliseconds(SorterDischargeOverrunMilliseconds);
                 }
-                AppLogger.Info("BLUE LID ROUTE entry sensor cleared, Coil 6, 7 and 9 discharge overrun started");
+                AppLogger.Info("LID ROUTE entry sensor cleared, sorter discharge overrun started");
+            }
+        }
+
+        private async Task SelectLidRouteAsync(LidRouteColor color, CancellationToken cancellationToken)
+        {
+            var sortingEnabled = false;
+            lock (_syncRoot)
+            {
+                sortingEnabled = _blueLidAutoSortingEnabled && !_resetRecoveryPending;
+            }
+            if (!sortingEnabled)
+            {
+                AppLogger.Info(color + " LID ROUTE ignored camera signal while auto sorting is disabled");
+                return;
+            }
+
+            await SetSorterOutputAsync(FactoryIoMap.Sorter1ForwardAndPower, true, cancellationToken).ConfigureAwait(false);
+            if (color == LidRouteColor.Blue)
+            {
+                await SetGreenLidSorterOutputAsync(false, cancellationToken).ConfigureAwait(false);
+                await SetSorterOutputAsync(FactoryIoMap.GreenLidBelt1, false, cancellationToken).ConfigureAwait(false);
+                await SetSorterOutputAsync(FactoryIoMap.Sorter1BlueLid, true, cancellationToken).ConfigureAwait(false);
+                await SetSorterOutputAsync(FactoryIoMap.BlueLidBelt1, true, cancellationToken).ConfigureAwait(false);
+                AppLogger.Info("BLUE LID ROUTE prepared Coil 7 ON, Coil 8 OFF, Coil 9 ON, Coil 10 OFF");
+            }
+            else
+            {
+                await SetSorterOutputAsync(FactoryIoMap.Sorter1BlueLid, false, cancellationToken).ConfigureAwait(false);
+                await SetSorterOutputAsync(FactoryIoMap.BlueLidBelt1, false, cancellationToken).ConfigureAwait(false);
+                await SetGreenLidSorterOutputAsync(true, cancellationToken).ConfigureAwait(false);
+                await SetSorterOutputAsync(FactoryIoMap.GreenLidBelt1, true, cancellationToken).ConfigureAwait(false);
+                await SetSorterOutputAsync(FactoryIoMap.GreenLidBelt2, true, cancellationToken).ConfigureAwait(false);
+                await TryWriteRegisterOutputAsync(FactoryIoMap.GreenLidXSetPointRegister, GreenLidXPickValue, cancellationToken).ConfigureAwait(false);
+                AppLogger.Info("GREEN LID ROUTE prepared Coil 8 ON, Coil 10/11 ON, Coil 6 ON, Coil 7 OFF, Coil 9 OFF, Holding Reg 0 = 890");
+            }
+
+            lock (_syncRoot)
+            {
+                _activeLidRouteColor = color;
+                _blueLidRouteState = BlueLidRouteState.Routing;
+                _blueLidRouteDeadlineUtc = DateTime.UtcNow.AddMilliseconds(SorterExitTimeoutMilliseconds);
+            }
+        }
+
+        private bool ShouldRefreshLidRoute(LidRouteColor color)
+        {
+            lock (_syncRoot)
+            {
+                if (!_blueLidAutoSortingEnabled || _resetRecoveryPending) return false;
+                if (_blueLidRouteState == BlueLidRouteState.Idle || _activeLidRouteColor != color) return true;
+                if (color == LidRouteColor.Green)
+                {
+                    if (!_statuses[FactoryIoMap.Sorter1ForwardAndPower.Key].CommandState) return true;
+                    return !_statuses[FactoryIoMap.Sorter1GreenLid.Key].CommandState ||
+                        !_statuses[FactoryIoMap.GreenLidBelt1.Key].CommandState ||
+                        !_statuses[FactoryIoMap.GreenLidBelt2.Key].CommandState ||
+                        _statuses[FactoryIoMap.Sorter1BlueLid.Key].CommandState ||
+                        _statuses[FactoryIoMap.BlueLidBelt1.Key].CommandState;
+                }
+
+                if (color == LidRouteColor.Blue)
+                {
+                    if (!_statuses[FactoryIoMap.Sorter1ForwardAndPower.Key].CommandState) return true;
+                    return !_statuses[FactoryIoMap.Sorter1BlueLid.Key].CommandState ||
+                        !_statuses[FactoryIoMap.BlueLidBelt1.Key].CommandState ||
+                        _statuses[FactoryIoMap.Sorter1GreenLid.Key].CommandState ||
+                        _statuses[FactoryIoMap.GreenLidBelt1.Key].CommandState;
+                }
+
+                return false;
             }
         }
 
         private async Task CheckBlueLidRouteTimersAsync(CancellationToken cancellationToken)
         {
             BlueLidRouteState expiredState;
+            LidRouteColor expiredColor;
             lock (_syncRoot)
             {
                 if (_blueLidRouteState == BlueLidRouteState.Idle || DateTime.UtcNow < _blueLidRouteDeadlineUtc)
                     return;
                 expiredState = _blueLidRouteState;
+                expiredColor = _activeLidRouteColor;
                 ResetBlueLidRouteState();
-            }
-
-            if (expiredState == BlueLidRouteState.AwaitingIdentification)
-            {
-                AppLogger.Info("BLUE LID ROUTE identification window expired");
-                return;
             }
 
             if (expiredState == BlueLidRouteState.ClearingBlueLidBelt)
             {
+                if (expiredColor == LidRouteColor.Green)
+                {
+                    await SetSorterOutputAsync(FactoryIoMap.GreenLidBelt1, false, cancellationToken).ConfigureAwait(false);
+                    await SetSorterOutputAsync(FactoryIoMap.GreenLidBelt2, true, cancellationToken).ConfigureAwait(false);
+                    await SetGreenLidRoller1IfStopSensorClearAsync(cancellationToken).ConfigureAwait(false);
+                    await SetGreenLidAlwaysRollersAsync(true, cancellationToken).ConfigureAwait(false);
+                    lock (_syncRoot)
+                    {
+                        if (_greenLidPackingState == GreenLidPackingState.Idle)
+                            _greenLidPackingState = GreenLidPackingState.WaitingForLid;
+                    }
+                    AppLogger.Info("GREEN LID ROUTE completed Coil 10 OFF");
+                    return;
+                }
+
                 await SetSorterOutputAsync(FactoryIoMap.BlueLidBelt1, false, cancellationToken).ConfigureAwait(false);
                 AppLogger.Info("BLUE LID ROUTE completed Coil 9 OFF");
                 return;
@@ -599,10 +680,23 @@ namespace MesProj.Services
 
             if (expiredState == BlueLidRouteState.ClearingSorter)
             {
-                await SetSorterOutputAsync(FactoryIoMap.Sorter1ForwardAndPower, false, cancellationToken).ConfigureAwait(false);
+                if (expiredColor == LidRouteColor.Green)
+                {
+                    await SetGreenLidSorterOutputAsync(false, cancellationToken).ConfigureAwait(false);
+                    lock (_syncRoot)
+                    {
+                        _activeLidRouteColor = LidRouteColor.Green;
+                        _blueLidRouteState = BlueLidRouteState.ClearingBlueLidBelt;
+                        _blueLidRouteDeadlineUtc = DateTime.UtcNow.AddMilliseconds(GreenLidBeltOverrunMilliseconds);
+                    }
+                    AppLogger.Info("GREEN LID ROUTE sorter discharge completed, Coil 10 overrun started");
+                    return;
+                }
+
                 await SetSorterOutputAsync(FactoryIoMap.Sorter1BlueLid, false, cancellationToken).ConfigureAwait(false);
                 lock (_syncRoot)
                 {
+                    _activeLidRouteColor = LidRouteColor.Blue;
                     _blueLidRouteState = BlueLidRouteState.ClearingBlueLidBelt;
                     _blueLidRouteDeadlineUtc = DateTime.UtcNow.AddMilliseconds(BlueLidBeltOverrunMilliseconds);
                 }
@@ -610,12 +704,432 @@ namespace MesProj.Services
                 return;
             }
 
-            await StopSorterOutputsAsync(cancellationToken).ConfigureAwait(false);
+            if (expiredColor == LidRouteColor.Green)
+            {
+                await SetGreenLidSorterOutputAsync(false, cancellationToken).ConfigureAwait(false);
+                await SetSorterOutputAsync(FactoryIoMap.GreenLidBelt1, false, cancellationToken).ConfigureAwait(false);
+            }
+            else if (expiredColor == LidRouteColor.Blue)
+            {
+                await SetSorterOutputAsync(FactoryIoMap.Sorter1BlueLid, false, cancellationToken).ConfigureAwait(false);
+                await SetSorterOutputAsync(FactoryIoMap.BlueLidBelt1, false, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (_blueLidAutoSortingEnabled)
+            {
+                await SetSorterOutputAsync(FactoryIoMap.ExitBeltSorter1, true, cancellationToken).ConfigureAwait(false);
+            }
             RaiseSorterAlarm(
-                expiredState == BlueLidRouteState.WaitingForSorter ? "SORTER_1_ARRIVAL_TIMEOUT" : "SORTER_1_EXIT_TIMEOUT",
-                expiredState == BlueLidRouteState.WaitingForSorter
+                "SORTER_1_EXIT_TIMEOUT",
+                false
                     ? "Blue Lid가 제한시간 안에 Sorter 1에 도착하지 않았습니다."
                     : "Blue Lid가 제한시간 안에 Sorter 1을 통과하지 못했습니다.");
+        }
+
+        private async Task HandleGreenLidPackingSensorEdgeAsync(
+            EquipmentDefinition definition,
+            bool risingEdge,
+            bool fallingEdge,
+            CancellationToken cancellationToken)
+        {
+            if (definition.Key == FactoryIoMap.GreenLidStopRollerSensor.Key && fallingEdge)
+            {
+                lock (_syncRoot)
+                {
+                    _greenLidStopSensorReleasePending = false;
+                }
+                AppLogger.Info("GREEN LID STOP SENSOR cleared, next box stop is armed");
+                return;
+            }
+
+            if (definition.Key == FactoryIoMap.GreenLidPositionerClampSensor.Key && fallingEdge)
+            {
+                await StartGreenLidPickerMoveAsync(cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            if (!risingEdge) return;
+
+            if (definition.Key == FactoryIoMap.GreenLidStopRollerSensor.Key)
+            {
+                if (IsGreenLidStopSensorReleasePending())
+                    return;
+
+                await StopGreenLidRoller1ForStopSensorAsync(cancellationToken).ConfigureAwait(false);
+
+                var canDrop = false;
+                lock (_syncRoot)
+                {
+                    canDrop = _greenLidPackingState == GreenLidPackingState.WaitingForBox;
+                    if (canDrop) _greenLidPackingState = GreenLidPackingState.Dropping;
+                }
+                if (canDrop)
+                {
+                    await DropGreenLidIntoBoxAsync(cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+
+                var canWaitPositioner = false;
+                lock (_syncRoot)
+                {
+                    canWaitPositioner = _blueLidAutoSortingEnabled &&
+                        _greenLidPackingState == GreenLidPackingState.WaitingForLid;
+                    if (canWaitPositioner) _greenLidPackingState = GreenLidPackingState.WaitingForPositioner;
+                }
+                if (!canWaitPositioner) return;
+
+                await SetSorterOutputAsync(FactoryIoMap.GreenLidBelt2, false, cancellationToken).ConfigureAwait(false);
+                await SetSorterOutputAsync(FactoryIoMap.GreenLidRoller1, false, cancellationToken).ConfigureAwait(false);
+                await SetGreenLidAlwaysRollersAsync(true, cancellationToken).ConfigureAwait(false);
+                AppLogger.Info("GREEN LID PACKING lid stopped, waiting for positioner sensor");
+                if (IsSensorActive(FactoryIoMap.GreenLidPositionerSensor))
+                    await ClampGreenLidPositionerAsync(cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            if (definition.Key == FactoryIoMap.GreenLidPositionerSensor.Key)
+            {
+                await ClampGreenLidPositionerAsync(cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            if (definition.Key == FactoryIoMap.GreenLidPositionerClampSensor.Key)
+            {
+                await ReleaseGreenLidPositionerClampAsync(cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            if (definition.Key == FactoryIoMap.GreenLidGrabSensor.Key)
+            {
+                var canReleaseFlow = false;
+                lock (_syncRoot)
+                {
+                    if (_greenLidPackingState == GreenLidPackingState.Grabbing)
+                    {
+                        _greenLidPackingState = GreenLidPackingState.WaitingForBox;
+                        canReleaseFlow = true;
+                    }
+                }
+                if (canReleaseFlow)
+                {
+                    await CompleteGreenLidSetPointGrabCycleAsync(cancellationToken).ConfigureAwait(false);
+                }
+                AppLogger.Info("GREEN LID PACKING grab sensor detected lid");
+                return;
+            }
+
+        }
+
+        private async Task DropGreenLidIntoBoxAsync(CancellationToken cancellationToken)
+        {
+            await SetSorterOutputAsync(FactoryIoMap.GreenLidRoller1, false, cancellationToken).ConfigureAwait(false);
+            await SetGreenLidAlwaysRollersAsync(true, cancellationToken).ConfigureAwait(false);
+            AppLogger.Info("GREEN LID PACKING box arrived at stop roller sensor, Coil 15 OFF, Coil 16-19 ON");
+            await Task.Delay(GreenLidPackingDropMilliseconds, cancellationToken).ConfigureAwait(false);
+            await SetSorterOutputAsync(FactoryIoMap.GreenLidGrab, false, cancellationToken).ConfigureAwait(false);
+            ArmGreenLidBoxRelease();
+            await SetSorterOutputAsync(FactoryIoMap.GreenLidRoller1, true, cancellationToken).ConfigureAwait(false);
+            await Task.Delay(GreenLidPackingReleaseMilliseconds, cancellationToken).ConfigureAwait(false);
+            await SetSorterOutputAsync(FactoryIoMap.RightPositioner4Raise, false, cancellationToken).ConfigureAwait(false);
+            await SetSorterOutputAsync(FactoryIoMap.GreenLidPositionerClamp, false, cancellationToken).ConfigureAwait(false);
+            await SetGreenLidAlwaysRollersAsync(true, cancellationToken).ConfigureAwait(false);
+            await SetSorterOutputAsync(FactoryIoMap.GreenLidBelt2, true, cancellationToken).ConfigureAwait(false);
+            lock (_syncRoot)
+            {
+                _greenLidPackingState = GreenLidPackingState.WaitingForLid;
+            }
+            AppLogger.Info("GREEN LID PACKING completed, Coil 13 OFF, Coil 12 OFF, Coil 14 OFF, Coil 15 ON, Coil 16-19 ON, Coil 11 ON");
+        }
+
+        private async Task MoveGreenLidPickerToLidAsync(CancellationToken cancellationToken)
+        {
+            await WriteRegisterOutputAsync(FactoryIoMap.GreenLidXSetPointRegister, GreenLidXPickValue, cancellationToken).ConfigureAwait(false);
+            AppLogger.Info("GREEN LID PICKER moving X to lid, Holding Reg 0 = 890");
+            await WaitInputRegisterNearOrMovementStoppedAsync(
+                FactoryIoMap.GreenLidXPositionRegister,
+                GreenLidXPickValue,
+                FactoryIoMap.GreenLidXMovingSensor,
+                cancellationToken).ConfigureAwait(false);
+            await MoveGreenLidPickerZToLidAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        private async Task ClampGreenLidPositionerAsync(CancellationToken cancellationToken)
+        {
+            var canClamp = false;
+            lock (_syncRoot)
+            {
+                canClamp = _blueLidAutoSortingEnabled &&
+                    !_statuses[FactoryIoMap.GreenLidPositionerClamp.Key].CommandState &&
+                    (_greenLidPackingState == GreenLidPackingState.Idle ||
+                     _greenLidPackingState == GreenLidPackingState.WaitingForLid ||
+                     _greenLidPackingState == GreenLidPackingState.WaitingForPositioner ||
+                     _greenLidPackingState == GreenLidPackingState.Clamping);
+                if (canClamp) _greenLidPackingState = GreenLidPackingState.Clamping;
+            }
+            if (!canClamp) return;
+
+            await Task.Delay(GreenLidPackingSettleMilliseconds, cancellationToken).ConfigureAwait(false);
+            await SetSorterOutputAsync(FactoryIoMap.GreenLidPositionerClamp, true, cancellationToken).ConfigureAwait(false);
+            AppLogger.Info("GREEN LID PACKING positioner sensor detected, Coil 14 ON");
+            if (IsSensorActive(FactoryIoMap.GreenLidPositionerClampSensor))
+                await ReleaseGreenLidPositionerClampAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        private async Task ReleaseGreenLidPositionerClampAsync(CancellationToken cancellationToken)
+        {
+            var canRelease = false;
+            lock (_syncRoot)
+            {
+                canRelease = _greenLidPackingState == GreenLidPackingState.Clamping &&
+                    _statuses[FactoryIoMap.GreenLidPositionerClamp.Key].CommandState;
+                if (canRelease) _greenLidPackingState = GreenLidPackingState.ReleasingClamp;
+            }
+            if (!canRelease) return;
+
+            await SetSorterOutputAsync(FactoryIoMap.GreenLidPositionerClamp, false, cancellationToken).ConfigureAwait(false);
+            AppLogger.Info("GREEN LID PACKING clamp sensor detected, Coil 14 OFF, waiting for clamp release");
+            await Task.Delay(GreenLidPackingSettleMilliseconds, cancellationToken).ConfigureAwait(false);
+            if (!IsSensorActive(FactoryIoMap.GreenLidPositionerClampSensor))
+                await StartGreenLidPickerMoveAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        private async Task StartGreenLidPickerMoveAsync(CancellationToken cancellationToken)
+        {
+            var canMoveToPick = false;
+            lock (_syncRoot)
+            {
+                canMoveToPick = _greenLidPackingState == GreenLidPackingState.ReleasingClamp;
+                if (canMoveToPick) _greenLidPackingState = GreenLidPackingState.MovingXToLid;
+            }
+            if (!canMoveToPick) return;
+
+            AppLogger.Info("GREEN LID PACKING clamp sensor detected, moving picker X");
+            await MoveGreenLidPickerToLidAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        private async Task MoveGreenLidPickerZToLidAsync(CancellationToken cancellationToken)
+        {
+            var canMoveZ = false;
+            lock (_syncRoot)
+            {
+                canMoveZ = _greenLidPackingState == GreenLidPackingState.MovingXToLid;
+                if (canMoveZ) _greenLidPackingState = GreenLidPackingState.MovingZToLid;
+            }
+            if (!canMoveZ) return;
+
+            await WriteRegisterOutputAsync(FactoryIoMap.GreenLidZSetPointRegister, GreenLidZPickValue, cancellationToken).ConfigureAwait(false);
+            AppLogger.Info("GREEN LID PICKER X position reached, Holding Reg 1 = 1000");
+            await WaitInputRegisterNearOrMovementStoppedAsync(
+                FactoryIoMap.GreenLidZPositionRegister,
+                GreenLidZPickValue,
+                FactoryIoMap.GreenLidZMovingSensor,
+                cancellationToken).ConfigureAwait(false);
+            await StartGreenLidGrabAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        private async Task StartGreenLidGrabAsync(CancellationToken cancellationToken)
+        {
+            var canGrab = false;
+            lock (_syncRoot)
+            {
+                if (_greenLidPackingState == GreenLidPackingState.MovingZToLid)
+                {
+                    _greenLidPackingState = GreenLidPackingState.Grabbing;
+                    canGrab = true;
+                }
+            }
+            if (!canGrab) return;
+
+            await Task.Delay(GreenLidPackingSettleMilliseconds, cancellationToken).ConfigureAwait(false);
+            await SetSorterOutputAsync(FactoryIoMap.GreenLidGrab, true, cancellationToken).ConfigureAwait(false);
+            AppLogger.Info("GREEN LID PICKER Z position reached, Coil 13 ON");
+        }
+
+        private async Task CompleteGreenLidSetPointGrabCycleAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                await WriteRegisterOutputAsync(FactoryIoMap.GreenLidZSetPointRegister, GreenLidSetPointHomeValue, cancellationToken).ConfigureAwait(false);
+                await Task.Delay(GreenLidSetPointMoveDelayMilliseconds, cancellationToken).ConfigureAwait(false);
+
+                await WriteRegisterOutputAsync(FactoryIoMap.GreenLidXSetPointRegister, GreenLidXPlaceValue, cancellationToken).ConfigureAwait(false);
+                await Task.Delay(GreenLidSetPointMoveDelayMilliseconds, cancellationToken).ConfigureAwait(false);
+
+                await WriteRegisterOutputAsync(FactoryIoMap.GreenLidZSetPointRegister, GreenLidZPickValue, cancellationToken).ConfigureAwait(false);
+                await Task.Delay(GreenLidSetPointMoveDelayMilliseconds, cancellationToken).ConfigureAwait(false);
+
+                await SetSorterOutputAsync(FactoryIoMap.GreenLidGrab, false, cancellationToken).ConfigureAwait(false);
+                ArmGreenLidBoxRelease();
+                await SetSorterOutputAsync(FactoryIoMap.GreenLidRoller1, true, cancellationToken).ConfigureAwait(false);
+                await SetGreenLidAlwaysRollersAsync(true, cancellationToken).ConfigureAwait(false);
+                await SetSorterOutputAsync(FactoryIoMap.GreenLidPositionerClamp, false, cancellationToken).ConfigureAwait(false);
+                await Task.Delay(GreenLidPackingReleaseMilliseconds, cancellationToken).ConfigureAwait(false);
+
+                await WriteRegisterOutputAsync(FactoryIoMap.GreenLidZSetPointRegister, GreenLidSetPointHomeValue, cancellationToken).ConfigureAwait(false);
+                await Task.Delay(GreenLidSetPointMoveDelayMilliseconds, cancellationToken).ConfigureAwait(false);
+
+                await WriteRegisterOutputAsync(FactoryIoMap.GreenLidXSetPointRegister, GreenLidSetPointHomeValue, cancellationToken).ConfigureAwait(false);
+                await Task.Delay(GreenLidSetPointMoveDelayMilliseconds, cancellationToken).ConfigureAwait(false);
+
+                await SetSorterOutputAsync(FactoryIoMap.GreenLidBelt2, true, cancellationToken).ConfigureAwait(false);
+                await SetGreenLidAlwaysRollersAsync(true, cancellationToken).ConfigureAwait(false);
+
+                lock (_syncRoot)
+                {
+                    _greenLidPackingState = GreenLidPackingState.WaitingForLid;
+                }
+                AppLogger.Info("GREEN LID SETPOINT GRAB completed Holding Reg 0/1 cycle");
+            }
+            catch
+            {
+                lock (_syncRoot)
+                {
+                    _greenLidPackingState = GreenLidPackingState.WaitingForLid;
+                }
+                throw;
+            }
+        }
+
+        private async Task WriteRegisterOutputAsync(int address, int value, CancellationToken cancellationToken)
+        {
+            await _client.WriteSingleRegisterAsync((ushort)address, (ushort)value, cancellationToken).ConfigureAwait(false);
+            AppLogger.Info(string.Format("MODBUS WRITE Holding Reg {0} {1}", address, value));
+        }
+
+        private async Task TryWriteRegisterOutputAsync(int address, int value, CancellationToken cancellationToken)
+        {
+            try
+            {
+                await WriteRegisterOutputAsync(address, value, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error(string.Format(
+                    "MODBUS WRITE Holding Reg {0} {1} failed. Sorter route continues.",
+                    address,
+                    value), ex);
+            }
+        }
+
+        private async Task WaitInputRegisterNearAsync(int address, int target, CancellationToken cancellationToken)
+        {
+            var deadlineUtc = DateTime.UtcNow.AddMilliseconds(GreenLidPositionTimeoutMilliseconds);
+            while (DateTime.UtcNow <= deadlineUtc)
+            {
+                var value = await _client.ReadInputRegisterAsync((ushort)address, cancellationToken).ConfigureAwait(false);
+                if (Math.Abs(value - target) <= GreenLidPositionTolerance) return;
+                await Task.Delay(SorterPollingMaximumMilliseconds, cancellationToken).ConfigureAwait(false);
+            }
+            throw new TimeoutException(string.Format("Green Lid Input Reg {0} did not reach {1}.", address, target));
+        }
+
+        private async Task WaitInputRegisterNearOrMovementStoppedAsync(
+            int registerAddress,
+            int target,
+            EquipmentDefinition movingSensor,
+            CancellationToken cancellationToken)
+        {
+            var deadlineUtc = DateTime.UtcNow.AddMilliseconds(GreenLidPositionTimeoutMilliseconds);
+            var movementWasSeen = false;
+            var stoppedSamples = 0;
+
+            while (DateTime.UtcNow <= deadlineUtc)
+            {
+                var value = await _client.ReadInputRegisterAsync((ushort)registerAddress, cancellationToken).ConfigureAwait(false);
+                if (Math.Abs(value - target) <= GreenLidPositionTolerance) return;
+
+                if (movingSensor != null && movingSensor.FeedbackInputAddress >= 0)
+                {
+                    var moving = await _client.ReadDiscreteInputAsync((ushort)movingSensor.FeedbackInputAddress, cancellationToken).ConfigureAwait(false);
+                    if (moving)
+                    {
+                        movementWasSeen = true;
+                        stoppedSamples = 0;
+                    }
+                    else if (movementWasSeen)
+                    {
+                        stoppedSamples++;
+                        if (stoppedSamples >= 2)
+                        {
+                            AppLogger.Info(string.Format(
+                                "GREEN LID PICKER movement stopped by {0}; Input Reg {1}={2}, target={3}",
+                                movingSensor.Name,
+                                registerAddress,
+                                value,
+                                target));
+                            return;
+                        }
+                    }
+                }
+
+                await Task.Delay(SorterPollingMaximumMilliseconds, cancellationToken).ConfigureAwait(false);
+            }
+
+            throw new TimeoutException(string.Format("Green Lid Input Reg {0} did not reach {1}.", registerAddress, target));
+        }
+
+        private async Task SetGreenLidAlwaysRollersAsync(bool value, CancellationToken cancellationToken)
+        {
+            await SetSorterOutputAsync(FactoryIoMap.GreenLidRoller2, value, cancellationToken).ConfigureAwait(false);
+            await SetSorterOutputAsync(FactoryIoMap.GreenLidRoller3, value, cancellationToken).ConfigureAwait(false);
+            await SetSorterOutputAsync(FactoryIoMap.GreenLidRoller4, value, cancellationToken).ConfigureAwait(false);
+            await SetSorterOutputAsync(FactoryIoMap.GreenLidRoller5, value, cancellationToken).ConfigureAwait(false);
+        }
+
+        private async Task SetGreenLidSorterOutputAsync(bool value, CancellationToken cancellationToken)
+        {
+            await SetSorterOutputAsync(FactoryIoMap.Sorter1GreenLid, value, cancellationToken).ConfigureAwait(false);
+        }
+
+        private async Task SetGreenLidRoller1IfStopSensorClearAsync(CancellationToken cancellationToken)
+        {
+            var stopSensorActive = false;
+            lock (_syncRoot)
+            {
+                stopSensorActive = _statuses[FactoryIoMap.GreenLidStopRollerSensor.Key].FeedbackState;
+            }
+            await SetSorterOutputAsync(FactoryIoMap.GreenLidRoller1, !stopSensorActive, cancellationToken).ConfigureAwait(false);
+        }
+
+        private bool IsSensorActive(EquipmentDefinition definition)
+        {
+            lock (_syncRoot)
+            {
+                EquipmentStatus status;
+                return _statuses.TryGetValue(definition.Key, out status) && status.FeedbackState;
+            }
+        }
+
+        private bool IsGreenLidStopSensorReleasePending()
+        {
+            lock (_syncRoot)
+            {
+                return _greenLidStopSensorReleasePending;
+            }
+        }
+
+        private void ArmGreenLidBoxRelease()
+        {
+            lock (_syncRoot)
+            {
+                _greenLidStopSensorReleasePending = true;
+            }
+            AppLogger.Info("GREEN LID BOX release armed, Coil 15 ON until stop sensor clears");
+        }
+
+        private async Task StopGreenLidRoller1ForStopSensorAsync(CancellationToken cancellationToken)
+        {
+            var shouldStop = false;
+            lock (_syncRoot)
+            {
+                shouldStop = _blueLidAutoSortingEnabled &&
+                    _statuses[FactoryIoMap.GreenLidRoller1.Key].CommandState;
+            }
+            if (!shouldStop) return;
+
+            await SetSorterOutputAsync(FactoryIoMap.GreenLidRoller1, false, cancellationToken).ConfigureAwait(false);
+            await SetGreenLidAlwaysRollersAsync(true, cancellationToken).ConfigureAwait(false);
+            AppLogger.Info("GREEN LID STOP SENSOR active, Coil 15 OFF, Coil 16-19 ON");
         }
 
         private async Task SetSorterOutputAsync(
@@ -640,18 +1154,47 @@ namespace MesProj.Services
             await SetSorterOutputAsync(FactoryIoMap.ExitBeltSorter1, false, cancellationToken).ConfigureAwait(false);
             await SetSorterOutputAsync(FactoryIoMap.Sorter1ForwardAndPower, false, cancellationToken).ConfigureAwait(false);
             await SetSorterOutputAsync(FactoryIoMap.Sorter1BlueLid, false, cancellationToken).ConfigureAwait(false);
-            await SetSorterOutputAsync(FactoryIoMap.Sorter1GreenLid, false, cancellationToken).ConfigureAwait(false);
+            await SetGreenLidSorterOutputAsync(false, cancellationToken).ConfigureAwait(false);
             await SetSorterOutputAsync(FactoryIoMap.BlueLidBelt1, false, cancellationToken).ConfigureAwait(false);
+            await SetSorterOutputAsync(FactoryIoMap.GreenLidBelt1, false, cancellationToken).ConfigureAwait(false);
+            await SetSorterOutputAsync(FactoryIoMap.GreenLidBelt2, false, cancellationToken).ConfigureAwait(false);
+            await SetSorterOutputAsync(FactoryIoMap.GreenLidRoller1, false, cancellationToken).ConfigureAwait(false);
+            await SetSorterOutputAsync(FactoryIoMap.RightPositioner4Raise, false, cancellationToken).ConfigureAwait(false);
+            await SetSorterOutputAsync(FactoryIoMap.GreenLidGrab, false, cancellationToken).ConfigureAwait(false);
+            await SetSorterOutputAsync(FactoryIoMap.GreenLidPositionerClamp, false, cancellationToken).ConfigureAwait(false);
+            await SetGreenLidAlwaysRollersAsync(false, cancellationToken).ConfigureAwait(false);
+            await ResetGreenLidSetPointsAsync(cancellationToken).ConfigureAwait(false);
             lock (_syncRoot)
             {
                 ResetBlueLidRouteState();
+                ResetGreenLidPackingState();
             }
+        }
+
+        private async Task ResetGreenLidSetPointsAsync(CancellationToken cancellationToken)
+        {
+            await WriteRegisterOutputAsync(
+                FactoryIoMap.GreenLidXSetPointRegister,
+                GreenLidSetPointHomeValue,
+                cancellationToken).ConfigureAwait(false);
+            await WriteRegisterOutputAsync(
+                FactoryIoMap.GreenLidZSetPointRegister,
+                GreenLidSetPointHomeValue,
+                cancellationToken).ConfigureAwait(false);
+            AppLogger.Info("GREEN LID PICKER set points reset Holding Reg 0/1 = 0");
         }
 
         private void ResetBlueLidRouteState()
         {
             _blueLidRouteState = BlueLidRouteState.Idle;
             _blueLidRouteDeadlineUtc = DateTime.MinValue;
+            _activeLidRouteColor = LidRouteColor.None;
+        }
+
+        private void ResetGreenLidPackingState()
+        {
+            _greenLidPackingState = GreenLidPackingState.Idle;
+            _greenLidStopSensorReleasePending = false;
         }
 
         private void RaiseSorterAlarm(string code, string message)
@@ -792,11 +1335,30 @@ namespace MesProj.Services
         private enum BlueLidRouteState
         {
             Idle,
-            AwaitingIdentification,
-            WaitingForSorter,
             Routing,
             ClearingSorter,
             ClearingBlueLidBelt
+        }
+
+        private enum LidRouteColor
+        {
+            None,
+            Blue,
+            Green
+        }
+
+        private enum GreenLidPackingState
+        {
+            Idle,
+            WaitingForLid,
+            MovingXToLid,
+            MovingZToLid,
+            WaitingForPositioner,
+            Clamping,
+            ReleasingClamp,
+            Grabbing,
+            WaitingForBox,
+            Dropping
         }
 
         private void RaiseError(string message)

@@ -42,6 +42,17 @@ namespace MesProj.Infrastructure
         public static readonly EquipmentDefinition Sorter1BlueLid = new EquipmentDefinition("Sorter1BlueLid", "Sorter 1 Blue Lid", 7);
         public static readonly EquipmentDefinition Sorter1GreenLid = new EquipmentDefinition("Sorter1GreenLid", "Sorter 1 Green Lid", 8);
         public static readonly EquipmentDefinition BlueLidBelt1 = new EquipmentDefinition("BlueLidBelt1", "Blue Lid Belt 1", 9);
+        public static readonly EquipmentDefinition GreenLidBelt1 = new EquipmentDefinition("GreenLidBelt1", "Green Lid Belt 1", 10);
+        public static readonly EquipmentDefinition GreenLidBelt2 = new EquipmentDefinition("GreenLidBelt2", "Green Lid Belt 2", 11);
+        public static readonly EquipmentDefinition RightPositioner4Raise = new EquipmentDefinition("RightPositioner4Raise", "Right Positioner 4 Raise", 12);
+        public static readonly EquipmentDefinition GreenLidGrab = new EquipmentDefinition("GreenLidGrab", "Green Lid Grab", 13);
+        public static readonly EquipmentDefinition GreenLidPositionerClamp = new EquipmentDefinition("GreenLidPositionerClamp", "Green Lid Positioner Clamp", 14);
+        public static readonly EquipmentDefinition GreenLidRoller1 = new EquipmentDefinition("GreenLidRoller1", "Green Lid Roller 1", 15);
+        public static readonly EquipmentDefinition GreenLidRoller2 = new EquipmentDefinition("GreenLidRoller2", "Green Lid Roller 2", 16);
+        public static readonly EquipmentDefinition GreenLidRoller3 = new EquipmentDefinition("GreenLidRoller3", "Green Lid Roller 3", 17);
+        public static readonly EquipmentDefinition GreenLidRoller4 = new EquipmentDefinition("GreenLidRoller4", "Green Lid Roller 4", 18);
+        public static readonly EquipmentDefinition GreenLidRoller5 = new EquipmentDefinition("GreenLidRoller5", "Green Lid Roller 5", 19);
+        public static readonly EquipmentDefinition StackerCraneGreenLidLeft = new EquipmentDefinition("StackerCraneGreenLidLeft", "Stacker Crane Green Lid Left", 20);
         public static readonly EquipmentDefinition MachiningEntranceSensor = new EquipmentDefinition("MachiningEntranceSensor", "Stop Entrance Belt Sensor", -1, 0);
         public static readonly EquipmentDefinition MachiningBusy = new EquipmentDefinition("MachiningBusy", "Machining Center Is Busy", -1, 1);
         public static readonly EquipmentDefinition MachiningError = new EquipmentDefinition("MachiningError", "Machining Center Has Error", -1, 2);
@@ -50,9 +61,20 @@ namespace MesProj.Infrastructure
         public static readonly EquipmentDefinition ReadSensorSorter1 = new EquipmentDefinition("ReadSensorSorter1", "Read Sensor Sorter 1", -1, 5);
         public static readonly EquipmentDefinition BlueLidCamera = new EquipmentDefinition("BlueLidCamera", "Blue Lid Camera", -1, 6);
         public static readonly EquipmentDefinition GreenLidCamera = new EquipmentDefinition("GreenLidCamera", "Green Lid Camera", -1, 7);
+        public static readonly EquipmentDefinition RightPositioner4Limit = new EquipmentDefinition("RightPositioner4Limit", "Right Positioner 4 Limit", -1, 8);
+        public static readonly EquipmentDefinition GreenLidStopRollerSensor = new EquipmentDefinition("GreenLidStopRollerSensor", "Green Lid Stop Roller Sensor", -1, 9);
+        public static readonly EquipmentDefinition GreenLidGrabSensor = new EquipmentDefinition("GreenLidGrabSensor", "Green Lid Grab Sensor", -1, 10);
+        public static readonly EquipmentDefinition GreenLidPositionerSensor = new EquipmentDefinition("GreenLidPositionerSensor", "Green Lid Positioner Sensor", -1, 11);
+        public static readonly EquipmentDefinition GreenLidPositionerClampSensor = new EquipmentDefinition("GreenLidPositionerClampSensor", "Green Lid Positioner Clamp Sensor", -1, 12);
+        public static readonly EquipmentDefinition GreenLidXMovingSensor = new EquipmentDefinition("GreenLidXMovingSensor", "Green Lid X Moving Sensor", -1, 13);
+        public static readonly EquipmentDefinition GreenLidZMovingSensor = new EquipmentDefinition("GreenLidZMovingSensor", "Green Lid Z Moving Sensor", -1, 14);
 
         public const int AtExitSensorInput = 0;
-        public const int VisionRegister = 0;
+        public const int MachiningProgressRegister = 0;
+        public const int GreenLidXSetPointRegister = 0;
+        public const int GreenLidZSetPointRegister = 1;
+        public const int GreenLidXPositionRegister = 1;
+        public const int GreenLidZPositionRegister = 2;
 
         public static IReadOnlyList<EquipmentDefinition> AllEquipment
         {

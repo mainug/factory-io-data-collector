@@ -21,6 +21,8 @@ namespace MesProj.Controls
         private readonly DataGridView _sensorGrid = new DataGridView();
         private readonly DataGridView _sortingGrid = new DataGridView();
         private readonly DataGridView _sortingSensorGrid = new DataGridView();
+        private readonly DataGridView _stackingGrid = new DataGridView();
+        private readonly DataGridView _stackingSensorGrid = new DataGridView();
         private readonly Label _connectionLabel = new Label();
         private readonly Label _lastCommunicationLabel = new Label();
         private readonly Label _optionsLabel = new Label();
@@ -31,6 +33,7 @@ namespace MesProj.Controls
         private readonly Button _machiningResetButton = new Button();
         private readonly Button _sortingStartButton = new Button();
         private readonly Button _sortingStopButton = new Button();
+        private readonly Button _stackingResetButton = new Button();
         private bool _materialReady;
         private bool _automaticMachiningEnabled;
         private bool _startPulseInProgress;
@@ -78,25 +81,25 @@ namespace MesProj.Controls
             connectionGroup.Controls.Add(connectionLayout);
 
             var operationGroup = new GroupBox { Text = "가공 상태", Dock = DockStyle.Fill, Font = new Font("맑은 고딕", 10, FontStyle.Bold) };
-            var operationLayout = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(10), AutoScroll = true };
+            var operationLayout = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(10), AutoScroll = false, WrapContents = false };
             _machiningProgressLabel.AutoSize = true;
             _machiningProgressLabel.Margin = new Padding(0, 8, 12, 0);
-            _machiningProgressBar.Width = 420;
+            _machiningProgressBar.Width = 300;
             _machiningProgressBar.Height = 28;
             operationLayout.Controls.Add(_machiningProgressLabel);
             operationLayout.Controls.Add(_machiningProgressBar);
             _machiningStartButton.Text = "가공 시작";
-            _machiningStartButton.Width = 122;
+            _machiningStartButton.Width = 112;
             _machiningStartButton.Height = 36;
             _machiningStartButton.Click += MachiningStartButtonClick;
             operationLayout.Controls.Add(_machiningStartButton);
             _machiningStopButton.Text = "가공 정지";
-            _machiningStopButton.Width = 122;
+            _machiningStopButton.Width = 112;
             _machiningStopButton.Height = 36;
             _machiningStopButton.Click += MachiningStopButtonClick;
             operationLayout.Controls.Add(_machiningStopButton);
             _machiningResetButton.Text = "오류 리셋";
-            _machiningResetButton.Width = 122;
+            _machiningResetButton.Width = 112;
             _machiningResetButton.Height = 36;
             _machiningResetButton.Click += MachiningResetButtonClick;
             operationLayout.Controls.Add(_machiningResetButton);
@@ -125,7 +128,7 @@ namespace MesProj.Controls
             var machiningTab = new TabPage("가공 공정") { Padding = new Padding(6) };
             machiningTab.Controls.Add(machiningLayout);
 
-            var sortingEquipmentGroup = new GroupBox { Text = "분류·적재 공정 I/O", Dock = DockStyle.Fill, Font = new Font("맑은 고딕", 10, FontStyle.Bold) };
+            var sortingEquipmentGroup = new GroupBox { Text = "분류 공정 I/O", Dock = DockStyle.Fill, Font = new Font("맑은 고딕", 10, FontStyle.Bold) };
             var sortingEquipmentLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
             sortingEquipmentLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 55));
             sortingEquipmentLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 45));
@@ -139,7 +142,7 @@ namespace MesProj.Controls
             sortingEquipmentLayout.Controls.Add(sortingSensorGroup, 0, 1);
             sortingEquipmentGroup.Controls.Add(sortingEquipmentLayout);
 
-            var sortingOperationGroup = new GroupBox { Text = "Blue Lid 자동 분류", Dock = DockStyle.Fill, Font = new Font("맑은 고딕", 10, FontStyle.Bold) };
+            var sortingOperationGroup = new GroupBox { Text = "Lid 자동 분류", Dock = DockStyle.Fill, Font = new Font("맑은 고딕", 10, FontStyle.Bold) };
             var sortingOperationLayout = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(10) };
             _sortingStartButton.Text = "자동 분류 시작";
             _sortingStartButton.Width = 130;
@@ -159,12 +162,45 @@ namespace MesProj.Controls
             sortingLayout.Controls.Add(sortingOperationGroup, 0, 0);
             sortingLayout.Controls.Add(sortingEquipmentGroup, 0, 1);
 
-            var sortingTab = new TabPage("분류·적재 공정") { Padding = new Padding(6) };
+            var sortingTab = new TabPage("분류 공정") { Padding = new Padding(6) };
             sortingTab.Controls.Add(sortingLayout);
+
+            var stackingEquipmentGroup = new GroupBox { Text = "적재 공정 I/O", Dock = DockStyle.Fill, Font = new Font("맑은 고딕", 10, FontStyle.Bold) };
+            var stackingEquipmentLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
+            stackingEquipmentLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 55));
+            stackingEquipmentLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 45));
+            var stackingActuatorGroup = new GroupBox { Text = "액추에이터 제어", Dock = DockStyle.Fill };
+            var stackingSensorGroup = new GroupBox { Text = "센서 모니터링", Dock = DockStyle.Fill };
+            ConfigureEquipmentGrid(_stackingGrid);
+            ConfigureSensorGrid(_stackingSensorGrid);
+            stackingActuatorGroup.Controls.Add(_stackingGrid);
+            stackingSensorGroup.Controls.Add(_stackingSensorGrid);
+            stackingEquipmentLayout.Controls.Add(stackingActuatorGroup, 0, 0);
+            stackingEquipmentLayout.Controls.Add(stackingSensorGroup, 0, 1);
+            stackingEquipmentGroup.Controls.Add(stackingEquipmentLayout);
+
+            var stackingOperationGroup = new GroupBox { Text = "\uC801\uC7AC \uCD9C\uB825 \uCD08\uAE30\uD654", Dock = DockStyle.Fill, Font = new Font("\uB9D1\uC740 \uACE0\uB515", 10, FontStyle.Bold) };
+            var stackingOperationLayout = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(10) };
+            _stackingResetButton.Text = "\uC801\uC7AC \uCD08\uAE30\uD654";
+            _stackingResetButton.Width = 130;
+            _stackingResetButton.Height = 36;
+            _stackingResetButton.Click += StackingResetButtonClick;
+            stackingOperationLayout.Controls.Add(_stackingResetButton);
+            stackingOperationGroup.Controls.Add(stackingOperationLayout);
+
+            var stackingLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
+            stackingLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 76));
+            stackingLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            stackingLayout.Controls.Add(stackingOperationGroup, 0, 0);
+            stackingLayout.Controls.Add(stackingEquipmentGroup, 0, 1);
+
+            var stackingTab = new TabPage("적재 공정") { Padding = new Padding(6) };
+            stackingTab.Controls.Add(stackingLayout);
 
             var processTabs = new TabControl { Dock = DockStyle.Fill };
             processTabs.TabPages.Add(machiningTab);
             processTabs.TabPages.Add(sortingTab);
+            processTabs.TabPages.Add(stackingTab);
 
             root.Controls.Add(connectionGroup, 0, 0);
             root.Controls.Add(processTabs, 0, 1);
@@ -201,6 +237,24 @@ namespace MesProj.Controls
             grid.Columns.Add(on);
             grid.Columns.Add(off);
             grid.CellContentClick += GridCellContentClick;
+            grid.CellFormatting += EquipmentGridCellFormatting;
+        }
+
+        private static void EquipmentGridCellFormatting(object sender, DataGridViewCellFormattingEventArgs e)
+        {
+            var grid = sender as DataGridView;
+            if (grid == null || e.RowIndex < 0 || e.ColumnIndex < 0) return;
+
+            var column = grid.Columns[e.ColumnIndex] as DataGridViewTextBoxColumn;
+            if (column == null || column.DataPropertyName != "CommandStateText") return;
+
+            var row = grid.Rows[e.RowIndex].DataBoundItem as EquipmentRow;
+            if (row == null) return;
+
+            e.CellStyle.BackColor = row.CommandState ? Color.FromArgb(36, 150, 79) : Color.FromArgb(198, 55, 55);
+            e.CellStyle.ForeColor = Color.White;
+            e.CellStyle.SelectionBackColor = row.CommandState ? Color.FromArgb(24, 120, 61) : Color.FromArgb(160, 42, 42);
+            e.CellStyle.SelectionForeColor = Color.White;
         }
 
         private void ConfigureSensorGrid()
@@ -344,19 +398,24 @@ namespace MesProj.Controls
             await SetAutomaticSortingAsync(false);
         }
 
+        private async void StackingResetButtonClick(object sender, EventArgs e)
+        {
+            await ResetStackingOutputsAsync();
+        }
+
         private async Task SetAutomaticSortingAsync(bool enabled)
         {
             try
             {
                 using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
                 {
-                    await _factoryIoService.SetBlueLidAutoSortingEnabledAsync(enabled, cts.Token);
+                    await _factoryIoService.SetLidAutoSortingEnabledAsync(enabled, cts.Token);
                 }
 
                 _automaticSortingEnabled = enabled;
                 _setStatus(enabled
-                    ? "Blue Lid 자동 분류를 시작했습니다."
-                    : "Blue Lid 자동 분류를 중지하고 Sorter 출력을 안전 해제했습니다.");
+                    ? "Lid 자동 분류를 시작했습니다."
+                    : "Lid 자동 분류를 중지하고 Sorter 출력을 안전 해제했습니다.");
             }
             catch (Exception ex)
             {
@@ -365,6 +424,34 @@ namespace MesProj.Controls
             }
 
             UpdateSortingButtons(_stateService.GetSnapshot().Summary.ConnectionState);
+        }
+
+        private async Task ResetStackingOutputsAsync()
+        {
+            try
+            {
+                var addresses = _stateService.GetSnapshot().EquipmentStatuses
+                    .Where(x => x.OutputAddress >= 12 && x.OutputAddress <= 32 && !x.IsPulseOutput)
+                    .Select(x => x.OutputAddress)
+                    .Distinct()
+                    .OrderBy(x => x)
+                    .ToList();
+
+                using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(12)))
+                {
+                    foreach (var address in addresses)
+                    {
+                        await _factoryIoService.WriteCoilAsync(address, false, cts.Token);
+                    }
+                }
+
+                _setStatus("\uC801\uC7AC \uACF5\uC815 \uCD9C\uB825\uC744 \uCD08\uAE30\uD654\uD588\uC2B5\uB2C8\uB2E4.");
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("Stacking output initialization failed.", ex);
+                _setStatus(ex.Message);
+            }
         }
 
         private async void MachiningStopButtonClick(object sender, EventArgs e)
@@ -478,6 +565,7 @@ namespace MesProj.Controls
             _machiningStopButton.Enabled = snapshot.Summary.ConnectionState == FactoryConnectionState.Connected;
             _machiningResetButton.Enabled = snapshot.Summary.ConnectionState == FactoryConnectionState.Connected;
             UpdateSortingButtons(snapshot.Summary.ConnectionState);
+            UpdateStackingButtons(snapshot.Summary.ConnectionState);
             if (_automaticMachiningEnabled && _materialReady && !machiningBusy && !machiningError)
             {
                 BeginAutomaticMachiningStart(snapshot);
@@ -491,17 +579,27 @@ namespace MesProj.Controls
                 .Select(x => new SensorRow(x))
                 .ToList();
             var sortingEquipmentRows = snapshot.EquipmentStatuses
-                .Where(x => x.OutputAddress >= 5 && x.OutputAddress <= 9 && !x.IsPulseOutput)
+                .Where(x => x.OutputAddress >= 5 && x.OutputAddress <= 11 && !x.IsPulseOutput)
                 .Select(x => new EquipmentRow(x))
                 .ToList();
             var sortingSensorRows = snapshot.EquipmentStatuses
                 .Where(x => x.InputAddress >= 4 && x.InputAddress <= 7)
                 .Select(x => new SensorRow(x))
                 .ToList();
+            var stackingEquipmentRows = snapshot.EquipmentStatuses
+                .Where(x => x.OutputAddress >= 12 && x.OutputAddress <= 32 && !x.IsPulseOutput)
+                .Select(x => new EquipmentRow(x))
+                .ToList();
+            var stackingSensorRows = snapshot.EquipmentStatuses
+                .Where(x => x.InputAddress >= 8 && x.InputAddress <= 14)
+                .Select(x => new SensorRow(x))
+                .ToList();
             BindPreservingScroll(_grid, machiningEquipmentRows);
             BindPreservingScroll(_sensorGrid, machiningSensorRows);
             BindPreservingScroll(_sortingGrid, sortingEquipmentRows);
             BindPreservingScroll(_sortingSensorGrid, sortingSensorRows);
+            BindPreservingScroll(_stackingGrid, stackingEquipmentRows);
+            BindPreservingScroll(_stackingSensorGrid, stackingSensorRows);
         }
 
         private void UpdateSortingButtons(FactoryConnectionState connectionState)
@@ -509,6 +607,12 @@ namespace MesProj.Controls
             var connected = connectionState == FactoryConnectionState.Connected;
             _sortingStartButton.Enabled = connected && !_automaticSortingEnabled;
             _sortingStopButton.Enabled = connected && _automaticSortingEnabled;
+        }
+
+        private void UpdateStackingButtons(FactoryConnectionState connectionState)
+        {
+            var connected = connectionState == FactoryConnectionState.Connected;
+            _stackingResetButton.Enabled = connected;
         }
 
         private static void BindPreservingScroll(DataGridView grid, object dataSource)
@@ -595,7 +699,23 @@ namespace MesProj.Controls
                     case "Sorter1GreenLid":
                         return "경로 분류";
                     case "BlueLidBelt1":
-                        return "Blue Lid 이송";
+                        return "Blue Lid 우측 이송";
+                    case "GreenLidBelt1":
+                        return "Green Lid 좌측 이송";
+                    case "GreenLidBelt2":
+                        return "Green Lid 정렬 투입";
+                    case "GreenLidRoller1":
+                    case "GreenLidRoller2":
+                    case "GreenLidRoller3":
+                    case "GreenLidRoller4":
+                    case "GreenLidRoller5":
+                        return "박스 롤러 이송";
+                    case "RightPositioner4Raise":
+                        return "Green Lid 정렬";
+                    case "GreenLidGrab":
+                        return "Green Lid 적재";
+                    case "GreenLidPositionerClamp":
+                        return "Green Lid 클램프";
                     default:
                         return "설비 제어";
                 }
